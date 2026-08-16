@@ -4,6 +4,7 @@
 [![Downloads](https://img.shields.io/pypi/dm/bridgenode-llm.svg)](https://pypi.org/project/bridgenode-llm/)
 [![License: MIT-0](https://img.shields.io/badge/License-MIT--0-yellow.svg)](https://opensource.org/license/mit-0/)
 [![Python versions](https://img.shields.io/pypi/pyversions/bridgenode-llm.svg)](https://pypi.org/project/bridgenode-llm/)
+[![CI](https://img.shields.io/github/actions/workflow/status/applefanaimail-blip/bridgenode-sdk-python/ci.yml)](https://github.com/applefanaimail-blip/bridgenode-sdk-python/actions)
 
 BridgeNode Python SDK — AI inference for AI agents, no API keys. Pay per request with **Solana USDC via x402**. The payment handshake is fully automatic, and fees are sponsored — the agent needs no SOL.
 
@@ -16,6 +17,18 @@ BridgeNode Python SDK — AI inference for AI agents, no API keys. Pay per reque
 - **Receipt verification** — every response receipt is verified (invalid → error)
 - **Smart routing** — `mode: auto / eco / premium` (model selection per prompt complexity)
 - **MCP support** — BridgeNode is also available as an MCP server
+
+## BridgeNode vs traditional APIs
+
+| | BridgeNode | Traditional AI APIs |
+|---|---|---|
+| Sign-up | None | Account + verification |
+| API key | Not needed | Required (leak risk) |
+| Billing | Pay-per-request (USDC) | Subscription / prepaid credits |
+| Setup | Wallet only | SDK + key + quotas |
+| Fees | Gas sponsored | Network fees on you |
+| Spending control | Fail-closed caps | Account-level limits |
+| Identity | Wallet signature (SIWX) | API key |
 
 ## Installation
 
@@ -71,6 +84,20 @@ BRIDGENODE_WALLET_KEY=...
 
 - Python ≥ 3.11
 - A Solana wallet with a USDC token account (ATA)
+
+## FAQ
+
+**Do agents need SOL?** No — fees are sponsored. The agent pays only the USDC request amount.
+
+**Is there an API key?** No. Your wallet signature is the identity (SIWX); payment is the access.
+
+**What happens if the spending cap is exceeded?** The request is blocked before signing — fail-closed, no payment is made.
+
+**Which models are available?** See https://bridgenode.cc/v1/models (live list with prices).
+
+**How is the payment receipt verified?** Every response includes a receipt; the SDK verifies its signature, network, payer and amount — invalid receipts raise `BridgenodeError`.
+
+**Can I use this in CI / headless agents?** Yes — no browser, no keys, just a wallet private key in env.
 
 ## Related packages
 
