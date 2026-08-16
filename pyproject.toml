@@ -1,6 +1,6 @@
 [project]
 name = "bridgenode-llm"
-version = "0.2.12"
+version = "0.2.13"
 description = "BridgeNode LLM client — AI inference with x402 payment on Solana USDC. No API keys, no registration."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -9,7 +9,7 @@ license-files = ["LICENSE"]
 authors = [
     { name = "BridgeNode", email = "eli.BNx@proton.me" },
 ]
-keywords = ["x402", "solana", "usdc", "ai", "llm", "mcp", "agents", "payment", "bridgenode", "openai-compatible", "chat", "inference", "micropayments", "pay-per-request", "no-api-key", "gasless"]
+keywords = ["x402", "solana", "usdc", "ai", "llm", "mcp", "agents", "payment", "bridgenode", "openai-compatible", "chat", "inference", "micropayments", "pay-per-request", "no-api-key", "gasless", "deepseek", "groq", "mcp-server", "wallet"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
