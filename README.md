@@ -72,6 +72,17 @@ BRIDGENODE_WALLET_KEY=...
 - Python ≥ 3.11
 - A Solana wallet with a USDC token account (ATA)
 
+## Related packages
+
+The BridgeNode toolkit on PyPI:
+
+- `bridgenode-llm` — Python SDK (this package): https://pypi.org/project/bridgenode-llm
+- `bridgenode-cli` — command-line interface: https://pypi.org/project/bridgenode-cli
+- `bridgenode` — full toolkit (SDK + CLI): https://pypi.org/project/bridgenode
+- `bridgenode-sdk` — SDK alias package: https://pypi.org/project/bridgenode-sdk
+- `bridgenode-mcp` — MCP server package: https://pypi.org/project/bridgenode-mcp
+- `bridgenode-skill` — agent skill package: https://pypi.org/project/bridgenode-skill
+
 ## Links
 
 - Website: https://bridgenode.cc
