@@ -1,6 +1,6 @@
 [project]
 name = "bridgenode-llm"
-version = "0.2.13"
+version = "0.2.14"
 description = "BridgeNode LLM client — AI inference with x402 payment on Solana USDC. No API keys, no registration."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -27,8 +27,8 @@ classifiers = [
     "Natural Language :: English",
 ]
 dependencies = [
-    "x402[svm]>=2.18.0",
-    "x402[extensions]>=2.18.0",  # client.py imports x402.extensions.sign_in_with_x — clean install fails without it
+    "x402[svm]>=2.19.0",
+    "x402[extensions]>=2.19.0",  # client.py imports x402.extensions.sign_in_with_x — clean install fails without it
     "solana>=0.36.0,<0.40",  # solana 0.40.x removed solana.rpc.api — x402 imports it (broken combo)
     "httpx>=0.28.1",
     "python-dotenv>=1.2.2",

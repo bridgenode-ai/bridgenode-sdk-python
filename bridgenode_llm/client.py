@@ -27,6 +27,8 @@ Rules:
 from __future__ import annotations
 
 import base64
+import base64
+import json
 import logging
 import os
 import time
@@ -165,15 +167,47 @@ class LLMClient:
         # Last verified receipt (PAYMENT-RESPONSE) — for introspection
         self.last_receipt: dict[str, Any] | None = None
 
+    def _post(self, url: str, *, json: dict | None = None,
+              headers: dict | None = None,
+              timeout: float | None = None) -> httpx.Response:
+        """POST with network errors → BridgenodeError (fix.md 11).
+
+        httpx.ConnectError / TimeoutException would otherwise leak as raw
+        httpx exceptions — the agent expects BridgenodeError everywhere.
+        """
+        try:
+            return self._http.post(url, json=json, headers=headers,
+                                   timeout=timeout)
+        except httpx.ConnectError as exc:
+            raise BridgenodeError(f"Connection failed: {exc}") from exc
+        except httpx.TimeoutException as exc:
+            raise BridgenodeError(f"Request timed out: {exc}") from exc
+
+    def _send_stream(self, req: httpx.Request) -> httpx.Response:
+        """Streaming send with network errors → BridgenodeError (fix.md 11)."""
+        try:
+            return self._http.send(req, stream=True)
+        except httpx.ConnectError as exc:
+            raise BridgenodeError(f"Connection failed: {exc}") from exc
+        except httpx.TimeoutException as exc:
+            raise BridgenodeError(f"Request timed out: {exc}") from exc
+
     # ── API ────────────────────────────────────────────────────────────────
 
-    def chat(self, model: str, messages: str | list[dict],
-             max_tokens: int | None = None, mode: str | None = None) -> dict[str, Any]:
+    def chat(self, model: str | None, messages: str | list[dict],
+             max_tokens: int | None = None, mode: str | None = None,
+             stream: bool = False) -> dict[str, Any] | Any:
         """Single chat completion via the automatic x402 handshake (§4.1).
 
         item 41 (§8.4 example): ``messages`` can be a string (automatically
         converted to ``[{"role": "user", "content": ...}]``) or the
         OpenAI format (list[dict]) — the server still receives an OpenAI body.
+
+        ``stream=True`` (optional, §5.5): returns an iterator of OpenAI SSE
+        chunks (``dict`` with ``choices[].delta``), terminated by the
+        ``[DONE]`` marker; the receipt is verified and spend recorded BEFORE
+        the first chunk is yielded (billing boundary, §5.5). Default (False)
+        returns the full JSON response — backward-compatible.
 
         step 2: spending policy BEFORE signing; PAYMENT-RESPONSE receipt
         verification after 200. Errors → BridgenodeError.
@@ -191,6 +225,8 @@ class LLMClient:
             body["max_tokens"] = max_tokens
         if mode is not None:
             body["mode"] = mode
+        if stream:
+            body["stream"] = True
         headers = {"Content-Type": "application/json"}
         payload = None  # PaymentPayload — for step 2 receipt verification
 
@@ -207,8 +243,30 @@ class LLMClient:
             return min(call_timeout, remaining)
 
         # 1) Initial request (no payment): queue until 402 (§5.7)
-        resp = self._http.post(url, json=body, headers=headers,
+        # Client-side retry (§5.7 "Agentas retry'ina"): 503 (queue full /
+        # wait timeout) and 429 (per-agent queue cap / 402 rate limit) are
+        # retried with backoff — BEFORE any payment (nothing was charged,
+        # retry is free). Retry-After header is honoured when present.
+        # After payment: NO retry (single retry with PAYMENT-SIGNATURE only).
+        retries = 3
+        backoff_s = 1.0
+        for attempt in range(retries + 1):
+            resp = self._post(url, json=body, headers=headers,
                                timeout=_flow_timeout(self.initial_timeout))
+            if resp.status_code not in (503, 429):
+                break
+            if attempt >= retries:
+                break
+            retry_after = None
+            try:
+                ra = resp.headers.get("Retry-After")
+                if ra:
+                    retry_after = float(ra)
+            except (TypeError, ValueError):
+                retry_after = None
+            wait = min(retry_after if retry_after is not None
+                       else backoff_s * (2 ** attempt), 15.0)
+            time.sleep(wait)
 
         # 2) 402 → SIWX (step 3) first, then spending policy + payment (§5.7)
         if resp.status_code == 402:
@@ -219,7 +277,7 @@ class LLMClient:
             # (official create_siwx_client_hook); auth fails → payment (§5.7)
             siwx_header = self._build_siwx_header(payment_required)
             if siwx_header:
-                resp = self._http.post(
+                resp = self._post(
                     url, json=body, headers={**headers, SIGN_IN_WITH_X: siwx_header},
                     timeout=_flow_timeout(self.initial_timeout))
 
@@ -242,13 +300,23 @@ class LLMClient:
                 # "SIWX or payment" (nonce is single-use, already consumed in
                 # the SIWX retry; §5.7) — hook_headers only for the SIWX retry
                 retry_headers = {**headers, **pay_headers}
-                resp = self._http.post(url, json=body,
+                if stream:
+                    # SSE (§5.5): stream the retry — headers are available
+                    # immediately, the body is read chunk-by-chunk below
+                    req = self._http.build_request(
+                        "POST", url, json=body, headers=retry_headers,
+                        timeout=_flow_timeout(self.retry_timeout))
+                    resp = self._send_stream(req)
+                else:
+                    resp = self._post(url, json=body,
                                        headers=retry_headers,
                                        timeout=_flow_timeout(self.retry_timeout))
 
         if resp.status_code != 200:
             # fix.md §3: 402 with PAYMENT-RESPONSE — relay the server errorReason
             # (e.g., insufficient_funds) so the agent understands and acts
+            if stream:
+                resp.read()  # streamed body — materialize before parsing
             message = _error_message(resp)
             if resp.status_code == 402:
                 try:
@@ -263,12 +331,53 @@ class LLMClient:
 
         # P3#19 (fix.md item 16): spend recorded ONLY after a successful 200 — retry
         # failure (5xx) → the server refunds, a pessimistic cap is unnecessary
-        # (step 2: receipt verification afterwards; SIWX-granted 200 without payment →
-        # payload None → nothing to record)
+        # (step 2: receipt verification BEFORE recording spend — if the receipt
+        # is forged, the spend is NOT recorded, daily cap stays intact; R16/Ž16)
         if payload is not None:
-            self._record_spend(amount_usd)
             self._verify_receipt(payload, resp)
+            self._record_spend(amount_usd)
+        if stream:
+            return self._iter_sse(resp)
         return resp.json()
+
+    def _iter_sse(self, resp: httpx.Response) -> Any:
+        """Yield OpenAI SSE chunks from a streamed response (§5.5).
+
+        Each ``data:`` line is parsed as JSON and yielded as a dict; the
+        stream ends at ``data: [DONE]``. The response is closed when the
+        iterator is exhausted (or the caller stops iterating).
+        """
+        try:
+            for line in resp.iter_lines():
+                if not line.startswith("data:"):
+                    continue
+                data = line[len("data:"):].strip()
+                if data == "[DONE]":
+                    break
+                try:
+                    yield json.loads(data)
+                except json.JSONDecodeError:
+                    continue  # keep-alive comment or partial line — skip
+        finally:
+            resp.close()
+
+    def list_models(self) -> list[dict[str, Any]]:
+        """List available models + prices from GET /v1/models (§5.2).
+
+        Public endpoint — no payment, no authentication. Returns the
+        ``data`` array (model id, pricing.prompt/completion,
+        context_window, max_output_tokens). Errors → BridgenodeError.
+        """
+        url = f"{self.base_url}/models"
+        try:
+            resp = self._http.get(url, timeout=self.initial_timeout)
+        except httpx.HTTPError as exc:
+            raise BridgenodeError(f"models request failed: {exc}") from exc
+        if resp.status_code != 200:
+            raise BridgenodeError(
+                _error_message(resp), status_code=resp.status_code)
+        data = resp.json()
+        return data.get("data", [])
 
     # ── SIWX (step 3, §5.7) ────────────────────────────────────────────────────
 

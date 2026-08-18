@@ -644,3 +644,180 @@ def test_env_override(monkeypatch):
     transport = httpx.MockTransport(lambda r: httpx.Response(500))
     with LLMClient(transport=transport) as client:
         assert client.base_url == "https://alt.example/v1"
+
+
+def test_chat_stream_sse():
+    """stream=True (§5.5): SSE chunks yielded, receipt verified, [DONE] ends.
+
+    The 402 handshake is identical to non-stream; the paid retry returns
+    a text/event-stream body that the client parses chunk-by-chunk.
+    """
+    fee_kp = _test_keypair()
+    client_kp = _test_keypair()
+    seen: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append({
+            "has_payment": request.headers.get("PAYMENT-SIGNATURE") is not None,
+            "body": json.loads(request.content),
+        })
+        if not request.headers.get("PAYMENT-SIGNATURE"):
+            env = _envelope(pay_to=str(client_kp.pubkey()),
+                            fee_payer=str(fee_kp.pubkey()),
+                            amount="2000")
+            return httpx.Response(
+                402,
+                headers={"PAYMENT-REQUIRED": base64.b64encode(
+                    json.dumps(env).encode()).decode()},
+                json=env,
+            )
+        headers = {"PAYMENT-RESPONSE": _receipt_header(
+            request.headers["PAYMENT-SIGNATURE"], fee_kp,
+            str(client_kp.pubkey()))}
+        sse = (
+            'data: {"id":"1","choices":[{"delta":{"content":"Hel"}}]}\n\n'
+            'data: {"id":"1","choices":[{"delta":{"content":"lo"}}]}\n\n'
+            'data: [DONE]\n\n'
+        )
+        return httpx.Response(200, text=sse, headers=headers)
+
+    with _make_client(handler, _test_wallet_key(client_kp)) as client:
+        chunks = list(client.chat("deepseek-v4-flash", "hi", stream=True))
+
+    # stream: true was sent in the body
+    assert seen[0]["body"].get("stream") is True
+    assert seen[1]["body"].get("stream") is True
+    # SSE chunks parsed, [DONE] stops the iteration
+    assert len(chunks) == 2
+    assert chunks[0]["choices"][0]["delta"]["content"] == "Hel"
+    assert chunks[1]["choices"][0]["delta"]["content"] == "lo"
+    # receipt verified (Free-Riding, §8.4) — last_receipt populated
+    assert client.last_receipt is not None
+    assert client.last_receipt["success"] is True
+    assert client.last_receipt["payer"] == str(client_kp.pubkey())
+
+
+def test_chat_stream_sse():
+    """stream=True (§5.5): SSE chunks parsed, [DONE] stops, receipt verified."""
+    fee_kp = _test_keypair()
+    client_kp = _test_keypair()
+    seen: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append({
+            "has_payment": request.headers.get("PAYMENT-SIGNATURE") is not None,
+            "body": json.loads(request.content),
+        })
+        if not request.headers.get("PAYMENT-SIGNATURE"):
+            env = _envelope(pay_to=str(client_kp.pubkey()),
+                            fee_payer=str(fee_kp.pubkey()),
+                            amount="2000")
+            return httpx.Response(
+                402,
+                headers={"PAYMENT-REQUIRED": base64.b64encode(
+                    json.dumps(env).encode()).decode()},
+                json=env,
+            )
+        headers = {"PAYMENT-RESPONSE": _receipt_header(
+            request.headers["PAYMENT-SIGNATURE"], fee_kp,
+            str(client_kp.pubkey()))}
+        sse = (
+            'data: {"id":"1","choices":[{"delta":{"content":"Hel"}}]}\n\n'
+            'data: {"id":"1","choices":[{"delta":{"content":"lo"}}]}\n\n'
+            'data: [DONE]\n\n'
+        )
+        return httpx.Response(200, text=sse, headers=headers)
+
+    with _make_client(handler, _test_wallet_key(client_kp)) as client:
+        chunks = list(client.chat("deepseek-v4-flash", "hi", stream=True))
+
+    # stream: true was sent; payment handshake happened
+    assert seen[0]["body"].get("stream") is True
+    assert seen[1]["body"].get("stream") is True
+    assert seen[1]["has_payment"] is True
+    # SSE chunks parsed until [DONE]
+    assert len(chunks) == 2
+    assert chunks[0]["choices"][0]["delta"]["content"] == "Hel"
+    assert chunks[1]["choices"][0]["delta"]["content"] == "lo"
+    # receipt verified (last_receipt set by _verify_receipt)
+    assert client.last_receipt is not None
+    assert client.last_receipt["success"] is True
+
+
+def test_chat_retries_503_then_succeeds():
+    """§5.7 client-side retry: 503 (queue full) → backoff → 402 → payment → 200.
+
+    Retry happens BEFORE any payment — nothing was charged on 503, retry is
+    free; after payment there is NO retry (single PAYMENT-SIGNATURE retry).
+    """
+    fee_kp = _test_keypair()
+    client_kp = _test_keypair()
+    seen: list[dict] = []
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers.get("PAYMENT-SIGNATURE") is not None)
+        if not request.headers.get("PAYMENT-SIGNATURE"):
+            calls["n"] += 1
+            # First call → 503 (queue full, §5.7); second → 402 challenge
+            if calls["n"] == 1:
+                return httpx.Response(503, headers={"Retry-After": "1"},
+                                      json={"error": {"message": "queue full"}})
+            env = _envelope(pay_to=str(client_kp.pubkey()),
+                            fee_payer=str(fee_kp.pubkey()),
+                            amount="2000")
+            return httpx.Response(
+                402,
+                headers={"PAYMENT-REQUIRED": base64.b64encode(
+                    json.dumps(env).encode()).decode()},
+                json=env,
+            )
+        headers = {"PAYMENT-RESPONSE": _receipt_header(
+            request.headers["PAYMENT-SIGNATURE"], fee_kp,
+            str(client_kp.pubkey()))}
+        return httpx.Response(200, json=_openai_response(), headers=headers)
+
+    with _make_client(handler, _test_wallet_key(client_kp)) as client:
+        resp = client.chat("deepseek-v4-flash", "hi")
+
+    # 503 retried (3 initial attempts possible; here 2nd succeeds to 402)
+    assert calls["n"] == 2, f"expected 2 unpaid attempts, got {calls['n']}"
+    assert resp["choices"][0]["message"]["content"] == "Hello!"
+    # exactly one payment retry (PAYMENT-SIGNATURE) — no retry after payment
+    assert seen.count(True) == 1
+
+
+def test_list_models():
+    """§5.2: list_models() — public GET /models, no payment, prices returned."""
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(str(request.url))
+        return httpx.Response(200, json={"object": "list", "data": [
+            {"id": "deepseek-v4-flash",
+             "pricing": {"prompt": 0.00000020, "completion": 0.00000040},
+             "context_window": 1048576, "max_output_tokens": 8192},
+            {"id": "groq-llama-3.3-70b",
+             "pricing": {"prompt": 0.00000079, "completion": 0.00000099},
+             "context_window": 131072, "max_output_tokens": 32768},
+        ]})
+
+    with _make_client(handler) as client:
+        models = client.list_models()
+
+    assert len(models) == 2
+    assert models[0]["id"] == "deepseek-v4-flash"
+    assert models[0]["pricing"]["prompt"] == 0.00000020
+    assert seen == ["http://test/v1/models"]
+
+
+def test_list_models_error():
+    """§5.2: non-200 from /models → BridgenodeError with status."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(503, json={"error": {"message": "down"}})
+
+    with _make_client(handler) as client:
+        with pytest.raises(BridgenodeError) as exc:
+            client.list_models()
+    assert exc.value.status_code == 503
