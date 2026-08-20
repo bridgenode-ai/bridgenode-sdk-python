@@ -275,7 +275,7 @@ class LLMClient:
                 get_header, resp.content)
             # SIWX: 402 with challenge → sign → retry with SIGN-IN-WITH-X
             # (official create_siwx_client_hook); auth fails → payment (§5.7)
-            siwx_header = self._build_siwx_header(payment_required)
+            siwx_header = self._build_siwx_header(payment_required, str(resp.url))
             if siwx_header:
                 resp = self._post(
                     url, json=body, headers={**headers, SIGN_IN_WITH_X: siwx_header},
@@ -295,7 +295,7 @@ class LLMClient:
                 self._check_spending(amount_usd)
 
                 pay_headers, payload = self._http_helper.handle_402_response(
-                    dict(resp.headers), resp.content)
+                    dict(resp.headers), resp.content, str(resp.url))
                 # item 22: payment retry WITHOUT SIGN-IN-WITH-X — official pattern
                 # "SIWX or payment" (nonce is single-use, already consumed in
                 # the SIWX retry; §5.7) — hook_headers only for the SIWX retry
@@ -381,7 +381,7 @@ class LLMClient:
 
     # ── SIWX (step 3, §5.7) ────────────────────────────────────────────────────
 
-    def _build_siwx_header(self, payment_required) -> str | None:
+    def _build_siwx_header(self, payment_required, request_url: str) -> str | None:
         """SIGN-IN-WITH-X header from the 402 SIWX challenge (official hook, §5.7).
 
         Uses the official ``create_siwx_client_hook`` (P4) — our signer is a
@@ -408,8 +408,10 @@ class LLMClient:
 
         try:
             hook = create_siwx_client_hook(self._signer)
+            # x402 2.20.0 (FAZĖ 3 #7.5): the hook context requires request_url
             result = asyncio.run(hook(
-                SimpleNamespace(payment_required=payment_required)))
+                SimpleNamespace(payment_required=payment_required,
+                                request_url=request_url)))
         except Exception:
             return None  # no SIWX — fallback to payment (§5.7)
         if result is None:

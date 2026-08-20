@@ -1,6 +1,6 @@
 [project]
 name = "bridgenode-llm"
-version = "0.2.14"
+version = "0.2.15"
 description = "BridgeNode LLM client — AI inference with x402 payment on Solana USDC. No API keys, no registration."
 readme = "README.md"
 requires-python = ">=3.11"

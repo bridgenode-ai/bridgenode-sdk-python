@@ -92,17 +92,21 @@ def _envelope(pay_to: str, fee_payer: str, memo: str = "pi_test123",
     }
     if siwx:
         now = datetime.now(timezone.utc)
+        # x402 2.20.0 (FAZĖ 3 #7.5): SIWX challenge MUST match the response URL
+        # origin (assert_siwx_challenge_bound_to_origin — fail-closed). The mock
+        # server lives at http://test/v1, so the challenge is bound to it.
+        siwx_uri = "http://test/v1/chat/completions"
         env["extensions"] = {
             "sign-in-with-x": {
                 "info": {
-                    "domain": "bridgenode.cc",
-                    "uri": "https://bridgenode.cc/v1/chat/completions",
+                    "domain": "test",
+                    "uri": siwx_uri,
                     "version": "1",
                     "nonce": "nonce1234567890abcdef",
                     "issuedAt": now.isoformat().replace("+00:00", "Z"),
                     "expirationTime": (now + timedelta(minutes=5))
                     .isoformat().replace("+00:00", "Z"),
-                    "resources": ["https://bridgenode.cc/v1/chat/completions"],
+                    "resources": [siwx_uri],
                 },
                 "supportedChains": [
                     {"chainId": NETWORK, "type": "ed25519"},
@@ -544,7 +548,8 @@ def test_siwx_header_cryptographically_valid():
     assert header
     payload = parse_siwx_header(header)
     assert payload.address == str(client_kp.pubkey())
-    assert payload.domain == "bridgenode.cc"
+    # x402 2.20.0 (FAZĖ 3 #7.5): challenge bound to response origin (http://test)
+    assert payload.domain == "test"
     assert payload.nonce == "nonce1234567890abcdef"
     result = asyncio.run(verify_siwx_signature(payload))
     assert result.is_valid is True
