@@ -1,7 +1,7 @@
 [project]
 name = "bridgenode-llm"
-version = "0.2.15"
-description = "BridgeNode LLM client — AI inference with x402 payment on Solana USDC. No API keys, no registration."
+version = "0.2.16"
+description = "Agentic AI inference with x402 (HTTP 402) pay-per-request on Solana USDC — no API keys, no registration."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT-0"
@@ -9,7 +9,7 @@ license-files = ["LICENSE"]
 authors = [
     { name = "BridgeNode", email = "eli.BNx@proton.me" },
 ]
-keywords = ["x402", "solana", "usdc", "ai", "llm", "mcp", "agents", "payment", "bridgenode", "openai-compatible", "chat", "inference", "micropayments", "pay-per-request", "no-api-key", "gasless", "deepseek", "groq", "mcp-server", "wallet"]
+keywords = ["x402", "http-402", "agentic-commerce", "solana", "usdc", "ai", "llm", "mcp", "agents", "payment", "bridgenode", "openai-compatible", "chat", "inference", "micropayments", "pay-per-request", "no-api-key", "gasless", "deepseek", "groq", "mcp-server", "wallet"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -41,10 +41,10 @@ dev = [
 
 [project.urls]
 Homepage = "https://bridgenode.cc"
-Repository = "https://github.com/applefanaimail-blip/bridgenode-sdk-python"
+Repository = "https://github.com/bridgenode-ai/bridgenode-sdk-python"
 Documentation = "https://bridgenode.cc/llms.txt"
-Changelog = "https://github.com/applefanaimail-blip/bridgenode-sdk-python/releases"
-Issues = "https://github.com/applefanaimail-blip/bridgenode-sdk-python/issues"
+Changelog = "https://github.com/bridgenode-ai/bridgenode-sdk-python/releases"
+Issues = "https://github.com/bridgenode-ai/bridgenode-sdk-python/issues"
 Models = "https://bridgenode.cc/models"
 
 [build-system]
