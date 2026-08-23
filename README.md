@@ -117,3 +117,9 @@ The BridgeNode toolkit on PyPI:
 - Models & prices: https://bridgenode.cc/v1/models
 - Documentation: https://bridgenode.cc/llms.txt
 - Protocol: x402 V2 (https://docs.x402.org)
+
+## Community
+
+- Moltbook agent profile: https://moltbook.com/u/bridgenode_eli
+- Discord: https://discord.gg/HUpVKxJxhG
+- X (Twitter): https://x.com/eliBNx
