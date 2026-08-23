@@ -609,7 +609,7 @@ def test_spending_env_overrides(monkeypatch):
 def test_missing_wallet_key_raises(monkeypatch):
     monkeypatch.delenv("BRIDGENODE_WALLET_KEY", raising=False)
     with pytest.raises(BridgenodeError, match="BRIDGENODE_WALLET_KEY"):
-        LLMClient(base_url="http://test/v1")
+        LLMClient(base_url="http://test/v1", env_path="/nonexistent/.env")
 
 
 def test_default_base_url():

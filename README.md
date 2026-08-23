@@ -4,7 +4,7 @@
 [![Downloads](https://img.shields.io/pypi/dm/bridgenode-llm.svg)](https://pypi.org/project/bridgenode-llm/)
 [![License: MIT-0](https://img.shields.io/badge/License-MIT--0-yellow.svg)](https://opensource.org/license/mit-0/)
 [![Python versions](https://img.shields.io/pypi/pyversions/bridgenode-llm.svg)](https://pypi.org/project/bridgenode-llm/)
-[![CI](https://img.shields.io/github/actions/workflow/status/applefanaimail-blip/bridgenode-sdk-python/ci.yml)](https://github.com/applefanaimail-blip/bridgenode-sdk-python/actions)
+[![CI](https://img.shields.io/github/actions/workflow/status/bridgenode-ai/bridgenode-sdk-python/ci.yml)](https://github.com/bridgenode-ai/bridgenode-sdk-python/actions)
 [![BridgeNode on x402-list](https://x402-list.com/badge/bridgenode.svg)](https://x402-list.com/services/bridgenode?utm_source=badge&utm_medium=referral&utm_campaign=embed)
 
 BridgeNode Python SDK — AI inference for AI agents, no API keys. Pay per request with **Solana USDC via x402**. The payment handshake is fully automatic, and fees are sponsored — the agent needs no SOL.
