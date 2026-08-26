@@ -826,3 +826,65 @@ def test_list_models_error():
         with pytest.raises(BridgenodeError) as exc:
             client.list_models()
     assert exc.value.status_code == 503
+
+
+# ── B-4: malformed 402 amounts → BridgenodeError (fail-closed) ──────────────
+
+def _malformed_402_handler(fee_kp, client_wallet, amount: str):
+    """402 with a malformed `amount` in the accepts entry (B-4)."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        env = _envelope(pay_to=client_wallet,
+                        fee_payer=str(fee_kp.pubkey()),
+                        amount=amount)
+        return httpx.Response(
+            402,
+            headers={"PAYMENT-REQUIRED": base64.b64encode(
+                json.dumps(env).encode()).decode()},
+            json=env,
+        )
+    return handler
+
+
+def test_chat_malformed_402_decimal_amount_raises():
+    """B-4: decimal atomic amount ("12.5") → BridgenodeError, not ValueError."""
+    fee_kp = _test_keypair()
+    client_kp = _test_keypair()
+    client_wallet = str(client_kp.pubkey())
+
+    with _make_client(
+            _malformed_402_handler(fee_kp, client_wallet, "12.5"),
+            _test_wallet_key(client_kp)) as client:
+        with pytest.raises(BridgenodeError) as exc:
+            client.chat("deepseek-v4-flash",
+                        [{"role": "user", "content": "Hello!"}])
+    assert "Malformed payment amount" in str(exc.value)
+
+
+def test_chat_malformed_402_garbage_amount_raises():
+    """B-4: garbage amount ("abc") → BridgenodeError, not ValueError."""
+    fee_kp = _test_keypair()
+    client_kp = _test_keypair()
+    client_wallet = str(client_kp.pubkey())
+
+    with _make_client(
+            _malformed_402_handler(fee_kp, client_wallet, "abc"),
+            _test_wallet_key(client_kp)) as client:
+        with pytest.raises(BridgenodeError) as exc:
+            client.chat("deepseek-v4-flash",
+                        [{"role": "user", "content": "Hello!"}])
+    assert "Malformed payment amount" in str(exc.value)
+
+
+def test_chat_malformed_402_nonpositive_amount_raises():
+    """B-4: zero/negative amount ("0") → BridgenodeError, no TX."""
+    fee_kp = _test_keypair()
+    client_kp = _test_keypair()
+    client_wallet = str(client_kp.pubkey())
+
+    with _make_client(
+            _malformed_402_handler(fee_kp, client_wallet, "0"),
+            _test_wallet_key(client_kp)) as client:
+        with pytest.raises(BridgenodeError) as exc:
+            client.chat("deepseek-v4-flash",
+                        [{"role": "user", "content": "Hello!"}])
+    assert "Invalid payment amount" in str(exc.value)

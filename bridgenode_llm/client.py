@@ -290,7 +290,19 @@ class LLMClient:
                 # (exact + Solana mainnet + USDC, §3.1); the SDK does not check
                 # asset — verified here, BEFORE signing (no TX for other mint/network)
                 selected = self._select_payment_requirement(payment_required)
-                amount_atomic = int(selected.amount)
+                # B-4: malformed server amount (decimal/garbage/negative) must
+                # surface as BridgenodeError, not a raw ValueError crash
+                # (§8.4 SDK fail-closed).
+                try:
+                    amount_atomic = int(selected.amount)
+                except (TypeError, ValueError):
+                    raise BridgenodeError(
+                        f"Malformed payment amount {selected.amount!r} in 402 "
+                        "response — no payment made")
+                if amount_atomic <= 0:
+                    raise BridgenodeError(
+                        f"Invalid payment amount {selected.amount!r} in 402 "
+                        "response — no payment made")
                 amount_usd = amount_atomic / (10 ** USDC_DECIMALS)
                 self._check_spending(amount_usd)
 
