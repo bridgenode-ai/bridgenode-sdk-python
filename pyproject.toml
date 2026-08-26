@@ -29,7 +29,7 @@ classifiers = [
 dependencies = [
     "x402[svm]>=2.19.0",
     "x402[extensions]>=2.19.0",  # client.py imports x402.extensions.sign_in_with_x — clean install fails without it
-    "solana>=0.36.0,<0.40",  # solana 0.40.x removed solana.rpc.api — x402 imports it (broken combo)
+    "solana>=0.36.0,<0.41",  # solana 0.40.x removed solana.rpc.api — x402 imports it (broken combo)
     "httpx>=0.28.1",
     "python-dotenv>=1.2.2",
 ]
