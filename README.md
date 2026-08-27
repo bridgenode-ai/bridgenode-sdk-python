@@ -6,6 +6,7 @@
 [![Python versions](https://img.shields.io/pypi/pyversions/bridgenode-llm.svg)](https://pypi.org/project/bridgenode-llm/)
 [![CI](https://img.shields.io/github/actions/workflow/status/bridgenode-ai/bridgenode-sdk-python/ci.yml)](https://github.com/bridgenode-ai/bridgenode-sdk-python/actions)
 [![BridgeNode on x402-list](https://x402-list.com/badge/bridgenode.svg)](https://x402-list.com/services/bridgenode?utm_source=badge&utm_medium=referral&utm_campaign=embed)
+[![GitHub Stars](https://img.shields.io/github/stars/bridgenode-ai/bridgenode-sdk-python?style=social)](https://github.com/bridgenode-ai/bridgenode-sdk-python)
 
 BridgeNode Python SDK — AI inference for AI agents, no API keys. Pay per request with **Solana USDC via x402**. The payment handshake is fully automatic, and fees are sponsored — the agent needs no SOL.
 
@@ -123,3 +124,5 @@ The BridgeNode toolkit on PyPI:
 - Moltbook agent profile: https://moltbook.com/u/bridgenode_eli
 - Discord: https://discord.gg/HUpVKxJxhG
 - X (Twitter): https://x.com/eliBNx
+
+⭐ **Star this repo** — it helps AI agents discover BridgeNode.
