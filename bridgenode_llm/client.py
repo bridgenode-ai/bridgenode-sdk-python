@@ -1,10 +1,10 @@
-"""client.py — LLMClient: automatic x402 V2 handshake (§8.4, fix.md 4.2 steps 1–2).
+"""client.py — LLMClient: automatic x402 V2 handshake.
 
 Flow: POST /v1/chat/completions → 402 (PAYMENT-REQUIRED) → partial TX
-(TransferChecked + Memo, §3.3–§3.4) via the official x402 SVM scheme →
+(TransferChecked + Memo) via the official x402 SVM scheme →
 PAYMENT-SIGNATURE → retry → 200.
 
-step 2 — Receipt verification + spending policy (fail-closed, like ASG):
+step 2 — Receipt verification + spending policy (fail-closed):
 - After 200, the `PAYMENT-RESPONSE` receipt is verified: success=true,
   network = Solana mainnet, payer = our wallet, transaction = fee payer
   signature over OUR TX message (Free-Riding protection: a forged receipt
@@ -15,13 +15,13 @@ step 2 — Receipt verification + spending policy (fail-closed, like ASG):
 
 Rules:
 - Key from `.env` (`BRIDGENODE_WALLET_KEY`) — no arguments, no interactive
-  prompts (§8.4)
+  prompts
 - Endpoint: `https://bridgenode.cc/v1` (configurable via
   `BRIDGENODE_BASE_URL` or argument)
-- Two separate timeouts (§4.3/§8.4): initial ≥ 30s (queue until 402, §5.7),
+- Two separate timeouts: initial ≥ 30s (queue until 402),
   retry ≥ 113s (≤ 115s budget)
 - Uses the official x402 client (x402ClientSync + ExactSvmScheme) — no custom
-  payment code (taisykles.md: don't reinvent the wheel)
+  payment code (don't reinvent the wheel)
 """
 
 from __future__ import annotations
@@ -59,20 +59,20 @@ NETWORK = "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp"  # Solana mainnet (CAIP-2)
 USDC = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"  # Solana mainnet USDC mint
 USDC_DECIMALS = 6
 
-# §5.7/§8.4: the initial request waits in the queue until 402 (30s queue + 30s
-# window); retry with PAYMENT-SIGNATURE — up to the 115s budget (settle 20 + provider 30×3)
+# The initial request waits in the queue until 402 (30s queue + 30s
+# window); retry with PAYMENT-SIGNATURE — up to the 115s retry budget
 INITIAL_TIMEOUT_S = 60.0
 RETRY_TIMEOUT_S = 115.0
-# §8.4: total flow timeout ≥ sum of both (initial + retry ≈ 175s)
+# Total flow timeout ≥ sum of both (initial + retry ≈ 175s)
 FLOW_TIMEOUT_S = INITIAL_TIMEOUT_S + RETRY_TIMEOUT_S
 
-# Spending policy (fix.md 4.2 step 2): fail-closed, like ASG
+# Spending policy: fail-closed
 DEFAULT_MAX_PER_CALL_USD = 0.05
 DEFAULT_DAILY_CAP_USD = 1.0
 
 
 class BridgenodeError(Exception):
-    """BridgeNode SDK error — server error body (OpenAI format, §5.6)."""
+    """BridgeNode SDK error — server error body (OpenAI format)."""
 
     def __init__(self, message: str, status_code: int | None = None,
                  code: str | None = None) -> None:
@@ -83,7 +83,7 @@ class BridgenodeError(Exception):
 
 
 def _error_message(resp: httpx.Response) -> str:
-    """Server error message from the OpenAI-format body (§5.6)."""
+    """Server error message from the OpenAI-format body."""
     try:
         data = resp.json()
         err = data.get("error", {})
@@ -94,7 +94,7 @@ def _error_message(resp: httpx.Response) -> str:
     return f"HTTP {resp.status_code}"
 
 
-# fix.md §3: server errorReason → agent-readable hint (if known)
+# server errorReason → agent-readable hint (if known)
 _ERROR_REASON_HINTS = {
     "insufficient_funds": " — fund your wallet with USDC",
 }
@@ -125,7 +125,7 @@ class LLMClient:
         env_path: str = ".env",
         transport: httpx.BaseTransport | None = None,
     ) -> None:
-        """Creates the client. Key ONLY from `.env` (§8.4 — no arguments)."""
+        """Creates the client. Key ONLY from `.env` (no arguments)."""
         if load_dotenv is not None:
             load_dotenv(env_path)
 
@@ -148,7 +148,7 @@ class LLMClient:
             os.environ.get("BRIDGENODE_DAILY_CAP", DEFAULT_DAILY_CAP_USD))
         self._daily_spend: dict[str, float] = {}
 
-        # Official x402 client + SVM signer (§8.2, P4)
+        # Official x402 client + SVM signer
         signer = KeypairSigner.from_base58(self.wallet_key)
         self._signer = signer
         self.wallet_address = signer.address
@@ -159,7 +159,7 @@ class LLMClient:
         )
         # Official practice (docs.x402.org lifecycle-hooks): spending policy
         # enforced IN CODE, next to the payment client — protection remains even
-        # if env vars are missing; the hook runs BEFORE payload creation (§8.4)
+        # if env vars are missing; the hook runs BEFORE payload creation
         self._x402.on_before_payment_creation(self._spending_policy_hook)
         self._http_helper = x402HTTPClientSync(self._x402)
         self._http = httpx.Client(transport=transport)
@@ -170,7 +170,7 @@ class LLMClient:
     def _post(self, url: str, *, json: dict | None = None,
               headers: dict | None = None,
               timeout: float | None = None) -> httpx.Response:
-        """POST with network errors → BridgenodeError (fix.md 11).
+        """POST with network errors → BridgenodeError.
 
         httpx.ConnectError / TimeoutException would otherwise leak as raw
         httpx exceptions — the agent expects BridgenodeError everywhere.
@@ -184,7 +184,7 @@ class LLMClient:
             raise BridgenodeError(f"Request timed out: {exc}") from exc
 
     def _send_stream(self, req: httpx.Request) -> httpx.Response:
-        """Streaming send with network errors → BridgenodeError (fix.md 11)."""
+        """Streaming send with network errors → BridgenodeError."""
         try:
             return self._http.send(req, stream=True)
         except httpx.ConnectError as exc:
@@ -197,26 +197,26 @@ class LLMClient:
     def chat(self, model: str | None, messages: str | list[dict],
              max_tokens: int | None = None, mode: str | None = None,
              stream: bool = False) -> dict[str, Any] | Any:
-        """Single chat completion via the automatic x402 handshake (§4.1).
+        """Single chat completion via the automatic x402 handshake.
 
-        item 41 (§8.4 example): ``messages`` can be a string (automatically
+        ``messages`` can be a string (automatically
         converted to ``[{"role": "user", "content": ...}]``) or the
         OpenAI format (list[dict]) — the server still receives an OpenAI body.
 
-        ``stream=True`` (optional, §5.5): returns an iterator of OpenAI SSE
+        ``stream=True`` (optional): returns an iterator of OpenAI SSE
         chunks (``dict`` with ``choices[].delta``), terminated by the
         ``[DONE]`` marker; the receipt is verified and spend recorded BEFORE
-        the first chunk is yielded (billing boundary, §5.5). Default (False)
+        the first chunk is yielded (billing boundary). Default (False)
         returns the full JSON response — backward-compatible.
 
         step 2: spending policy BEFORE signing; PAYMENT-RESPONSE receipt
         verification after 200. Errors → BridgenodeError.
         """
-        # item 41: string prompt → OpenAI messages format (client side, §8.4)
+        # string prompt → OpenAI messages format (client side)
         if isinstance(messages, str):
             messages = [{"role": "user", "content": messages}]
         url = f"{self.base_url}/chat/completions"
-        # item 25: `model` omitted when None — body without `model: null`
+        # `model` omitted when None — body without `model: null`
         # (when sending only `mode`, the server would get JSON null → possible 400)
         body: dict[str, Any] = {"messages": messages}
         if model is not None:
@@ -230,7 +230,7 @@ class LLMClient:
         headers = {"Content-Type": "application/json"}
         payload = None  # PaymentPayload — for step 2 receipt verification
 
-        # item 42 (§8.4): total flow timeout — the whole handshake (initial + SIWX
+        # total flow timeout — the whole handshake (initial + SIWX
         # + payment retry) must fit within the budget; exceeded → BridgenodeError
         deadline = time.monotonic() + self.flow_timeout
 
@@ -239,11 +239,11 @@ class LLMClient:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise BridgenodeError(
-                    f"Flow timeout exceeded ({self.flow_timeout:.0f}s, §8.4)")
+                    f"Flow timeout exceeded ({self.flow_timeout:.0f}s)")
             return min(call_timeout, remaining)
 
-        # 1) Initial request (no payment): queue until 402 (§5.7)
-        # Client-side retry (§5.7 "Agentas retry'ina"): 503 (queue full /
+        # 1) Initial request (no payment): queue until 402
+        # Client-side retry (503 queue full /
         # wait timeout) and 429 (per-agent queue cap / 402 rate limit) are
         # retried with backoff — BEFORE any payment (nothing was charged,
         # retry is free). Retry-After header is honoured when present.
@@ -268,13 +268,13 @@ class LLMClient:
                        else backoff_s * (2 ** attempt), 15.0)
             time.sleep(wait)
 
-        # 2) 402 → SIWX (step 3) first, then spending policy + payment (§5.7)
+        # 2) 402 → SIWX first, then spending policy + payment
         if resp.status_code == 402:
             get_header, _body_data = self._resp_headers(resp)
             payment_required = self._http_helper.get_payment_required_response(
                 get_header, resp.content)
             # SIWX: 402 with challenge → sign → retry with SIGN-IN-WITH-X
-            # (official create_siwx_client_hook); auth fails → payment (§5.7)
+            # (official create_siwx_client_hook); auth fails → payment
             siwx_header = self._build_siwx_header(payment_required, str(resp.url))
             if siwx_header:
                 resp = self._post(
@@ -286,13 +286,13 @@ class LLMClient:
                 get_header, _body_data = self._resp_headers(resp)
                 payment_required = self._http_helper.get_payment_required_response(
                     get_header, resp.content)
-                # item 23: fail-closed — pick a supported accepts entry
-                # (exact + Solana mainnet + USDC, §3.1); the SDK does not check
+                # fail-closed — pick a supported accepts entry
+                # (exact + Solana mainnet + USDC); the SDK does not check
                 # asset — verified here, BEFORE signing (no TX for other mint/network)
                 selected = self._select_payment_requirement(payment_required)
-                # B-4: malformed server amount (decimal/garbage/negative) must
+                # malformed server amount (decimal/garbage/negative) must
                 # surface as BridgenodeError, not a raw ValueError crash
-                # (§8.4 SDK fail-closed).
+                # (SDK fail-closed).
                 try:
                     amount_atomic = int(selected.amount)
                 except (TypeError, ValueError):
@@ -308,12 +308,12 @@ class LLMClient:
 
                 pay_headers, payload = self._http_helper.handle_402_response(
                     dict(resp.headers), resp.content, str(resp.url))
-                # item 22: payment retry WITHOUT SIGN-IN-WITH-X — official pattern
+                # payment retry WITHOUT SIGN-IN-WITH-X — official pattern
                 # "SIWX or payment" (nonce is single-use, already consumed in
-                # the SIWX retry; §5.7) — hook_headers only for the SIWX retry
+                # the SIWX retry) — hook_headers only for the SIWX retry
                 retry_headers = {**headers, **pay_headers}
                 if stream:
-                    # SSE (§5.5): stream the retry — headers are available
+                    # SSE: stream the retry — headers are available
                     # immediately, the body is read chunk-by-chunk below
                     req = self._http.build_request(
                         "POST", url, json=body, headers=retry_headers,
@@ -325,7 +325,7 @@ class LLMClient:
                                        timeout=_flow_timeout(self.retry_timeout))
 
         if resp.status_code != 200:
-            # fix.md §3: 402 with PAYMENT-RESPONSE — relay the server errorReason
+            # 402 with PAYMENT-RESPONSE — relay the server errorReason
             # (e.g., insufficient_funds) so the agent understands and acts
             if stream:
                 resp.read()  # streamed body — materialize before parsing
@@ -341,10 +341,10 @@ class LLMClient:
                     pass  # no PAYMENT-RESPONSE — initial 402 (no payment)
             raise BridgenodeError(message, status_code=resp.status_code)
 
-        # P3#19 (fix.md item 16): spend recorded ONLY after a successful 200 — retry
+        # Spend recorded ONLY after a successful 200 — retry
         # failure (5xx) → the server refunds, a pessimistic cap is unnecessary
         # (step 2: receipt verification BEFORE recording spend — if the receipt
-        # is forged, the spend is NOT recorded, daily cap stays intact; R16/Ž16)
+        # is forged, the spend is NOT recorded, daily cap stays intact)
         if payload is not None:
             self._verify_receipt(payload, resp)
             self._record_spend(amount_usd)
@@ -353,7 +353,7 @@ class LLMClient:
         return resp.json()
 
     def _iter_sse(self, resp: httpx.Response) -> Any:
-        """Yield OpenAI SSE chunks from a streamed response (§5.5).
+        """Yield OpenAI SSE chunks from a streamed response.
 
         Each ``data:`` line is parsed as JSON and yielded as a dict; the
         stream ends at ``data: [DONE]``. The response is closed when the
@@ -374,7 +374,7 @@ class LLMClient:
             resp.close()
 
     def list_models(self) -> list[dict[str, Any]]:
-        """List available models + prices from GET /v1/models (§5.2).
+        """List available models + prices from GET /v1/models.
 
         Public endpoint — no payment, no authentication. Returns the
         ``data`` array (model id, pricing.prompt/completion,
@@ -391,18 +391,18 @@ class LLMClient:
         data = resp.json()
         return data.get("data", [])
 
-    # ── SIWX (step 3, §5.7) ────────────────────────────────────────────────────
+    # ── SIWX ────────────────────────────────────────────────────
 
     def _build_siwx_header(self, payment_required, request_url: str) -> str | None:
-        """SIGN-IN-WITH-X header from the 402 SIWX challenge (official hook, §5.7).
+        """SIGN-IN-WITH-X header from the 402 SIWX challenge (official hook).
 
-        Uses the official ``create_siwx_client_hook`` (P4) — our signer is a
+        Uses the official ``create_siwx_client_hook`` — our signer is a
         solders Keypair, so the signature is sync; the hook is async →
         ``asyncio.run``. Returns None if the 402 has no SIWX extension or the
         chain is unsupported.
 
-        P3#18 (fix.md item 16): call from a RUNNING event loop → SIWX skipped
-        (fallback to payment, §5.7) — ``asyncio.run`` would raise RuntimeError.
+        Call from a RUNNING event loop → SIWX skipped
+        (fallback to payment) — ``asyncio.run`` would raise RuntimeError.
         Documented: the sync SDK targets non-async contexts.
         """
         import asyncio
@@ -415,22 +415,22 @@ class LLMClient:
         else:
             logger.warning(
                 "SIWX skipped — called from a running event loop "
-                "(fallback to payment, §5.7; P3#18)")
+                "(fallback to payment)")
             return None
 
         try:
             hook = create_siwx_client_hook(self._signer)
-            # x402 2.20.0 (FAZĖ 3 #7.5): the hook context requires request_url
+            # the hook context requires request_url
             result = asyncio.run(hook(
                 SimpleNamespace(payment_required=payment_required,
                                 request_url=request_url)))
         except Exception:
-            return None  # no SIWX — fallback to payment (§5.7)
+            return None  # no SIWX — fallback to payment
         if result is None:
             return None
         return result.headers.get(SIGN_IN_WITH_X)
 
-    # ── Supported entry selection (item 23, §3.1) ──────────────────────────────
+    # ── Supported entry selection ──────────────────────────────
 
     def _select_payment_requirement(self, payment_required):
         """Fail-closed: supported accepts entry (exact + Solana mainnet + USDC).
@@ -439,7 +439,7 @@ class LLMClient:
         SVM, Solana mainnet) — it does not check the asset. So we verify here
         BEFORE signing: the first SDK-supported entry MUST be USDC; otherwise
         (different mint, different network, or empty accepts) →
-        BridgenodeError — no TX (§3.1 "agent SDKs automatically select a
+        BridgenodeError — no TX (agent SDKs automatically select a
         supported entry").
         """
         for req in payment_required.accepts:
@@ -459,7 +459,7 @@ class LLMClient:
     # ── Spending policy (step 2, fail-closed) ──────────────────────────────────
 
     def _spending_policy_hook(self, context) -> AbortResult | None:
-        """Spending policy as a lifecycle hook (official practice, §8.4).
+        """Spending policy as a lifecycle hook (official practice).
 
         Registered as ``on_before_payment_creation`` — runs BEFORE payment
         payload creation, next to the payment client. Returns AbortResult if
@@ -507,7 +507,7 @@ class LLMClient:
         return get_header, None
 
     def _verify_receipt(self, payload: Any, resp: httpx.Response) -> None:
-        """Verifies the PAYMENT-RESPONSE receipt (§7, Free-Riding protection).
+        """Verifies the PAYMENT-RESPONSE receipt (Free-Riding protection).
 
         Required: success=true, network = Solana mainnet, payer = our wallet,
         transaction = fee payer signature over OUR TX message (forged/incorrect

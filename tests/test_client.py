@@ -1,4 +1,4 @@
-"""test_client.py — LLMClient tests (fix.md 4.2 z1–z2).
+"""test_client.py — LLMClient tests.
 
 z1: automatic x402 handshake (402 → PAYMENT-SIGNATURE → 200).
 z2: PAYMENT-RESPONSE receipt verification (success/network/payer/TX signature/
@@ -6,7 +6,7 @@ amount) + spending policy (MAX_PER_CALL, DAILY_CAP — fail-closed).
 
 Mocked HTTP transport: first request → 402 with PAYMENT-REQUIRED;
 retry with PAYMENT-SIGNATURE → 200 with a valid receipt (the mock server signs
-the TX message as fee payer — like a real facilitator §8.2). No real
+the TX message as fee payer — like a real facilitator). No real
 network, no real RPC (mint metadata mocked).
 """
 
@@ -64,7 +64,7 @@ def _test_wallet_key(kp: Keypair) -> str:
 def _envelope(pay_to: str, fee_payer: str, memo: str = "pi_test123",
               amount: str = "2000", siwx: bool = False,
               asset: str = USDC, network: str = NETWORK) -> dict:
-    """402 V2 envelope (§3.1) — as the server sends it."""
+    """402 V2 envelope — as the server sends it."""
     env = {
         "x402Version": 2,
         "error": "PAYMENT-SIGNATURE header is required",
@@ -92,7 +92,7 @@ def _envelope(pay_to: str, fee_payer: str, memo: str = "pi_test123",
     }
     if siwx:
         now = datetime.now(timezone.utc)
-        # x402 2.20.0 (FAZĖ 3 #7.5): SIWX challenge MUST match the response URL
+        # SIWX challenge MUST match the response URL
         # origin (assert_siwx_challenge_bound_to_origin — fail-closed). The mock
         # server lives at http://test/v1, so the challenge is bound to it.
         siwx_uri = "http://test/v1/chat/completions"
@@ -167,7 +167,7 @@ def _make_server(fee_payer_kp: Keypair, client_wallet: str,
     """Creates a mock server handler: 402 → valid receipt → 200.
 
     Returns (handler, seen) — seen: list of requests (for tests).
-    ``siwx``: 402 with SIWX challenge (§5.7); ``siwx_granted``: SIWX retry
+    ``siwx``: 402 with SIWX challenge; ``siwx_granted``: SIWX retry
     answered with 200 immediately (known agent without payment).
     """
     seen: list[dict] = []
@@ -181,7 +181,7 @@ def _make_server(fee_payer_kp: Keypair, client_wallet: str,
             "body": json.loads(request.content),
         })
         if not request.headers.get("PAYMENT-SIGNATURE"):
-            # SIWX retry with a known agent → 200 without payment (§5.7)
+            # SIWX retry with a known agent → 200 without payment
             if siwx_granted and request.headers.get("SIGN-IN-WITH-X"):
                 return httpx.Response(200, json=_openai_response())
             env = _envelope(pay_to=client_wallet,
@@ -208,7 +208,7 @@ def _make_server(fee_payer_kp: Keypair, client_wallet: str,
 
 
 def _make_client(handler, wallet_key=None, **kwargs) -> LLMClient:
-    """LLMClient with BRIDGENODE_WALLET_KEY env (key ONLY from .env, §8.4)."""
+    """LLMClient with BRIDGENODE_WALLET_KEY env (key ONLY from .env)."""
     transport = httpx.MockTransport(handler)
     saved = os.environ.get("BRIDGENODE_WALLET_KEY")
     os.environ["BRIDGENODE_WALLET_KEY"] = (
@@ -243,7 +243,7 @@ def test_chat_handshake_success():
     assert len(seen) == 2
     assert seen[0]["has_payment"] is False
     assert seen[1]["has_payment"] is True
-    assert seen[0]["body"] == seen[1]["body"]  # price-bind (§4.1.1)
+    assert seen[0]["body"] == seen[1]["body"]  # price-bind
     assert client.last_receipt["success"] is True
     assert client.last_receipt["network"] == NETWORK
     assert client.last_receipt["payer"] == client_wallet
@@ -262,7 +262,7 @@ def test_chat_with_mode_and_max_tokens():
 
 
 def test_chat_mode_without_model_omits_model_key():
-    """Z25: `model=None` + `mode` → body WITHOUT `model` key (not JSON null)."""
+    """`model=None` + `mode` → body WITHOUT `model` key (not JSON null)."""
     fee_kp = _test_keypair()
     client_kp = _test_keypair()
     handler, seen = _make_server(fee_kp, str(client_kp.pubkey()))
@@ -278,8 +278,8 @@ def test_chat_mode_without_model_omits_model_key():
 
 
 def test_chat_string_prompt_same_body_as_list():
-    """Z41: string prompt is converted to OpenAI messages — identical body
-    as with list[dict] (protocol §8.4 example `chat(model, "Hello!")`)."""
+    """String prompt is converted to OpenAI messages — identical body
+    as with list[dict] (protocol example `chat(model, "Hello!")`)."""
     fee_kp = _test_keypair()
     client_kp = _test_keypair()
     handler, seen = _make_server(fee_kp, str(client_kp.pubkey()))
@@ -294,7 +294,7 @@ def test_chat_string_prompt_same_body_as_list():
 
 
 def test_server_error_raises():
-    """Non-402 error → BridgenodeError with the server message (§5.6)."""
+    """Non-402 error → BridgenodeError with the server message."""
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(400, json={
             "error": {"message": "Unknown model", "type": "invalid_request_error",
@@ -310,7 +310,7 @@ def test_server_error_raises():
 # ── Receipt verification (z2) ──────────────────────────────────────────────────
 
 def test_receipt_missing_header_raises():
-    """200 WITHOUT PAYMENT-RESPONSE receipt → error (not silent, §4.2 z2)."""
+    """200 WITHOUT PAYMENT-RESPONSE receipt → error (not silent)."""
     fee_kp = _test_keypair()
     client_kp = _test_keypair()
     handler, _seen = _make_server(fee_kp, str(client_kp.pubkey()),
@@ -335,7 +335,7 @@ def test_receipt_success_false_raises():
 
 def test_402_error_reason_passthrough():
     """402 retry with PAYMENT-RESPONSE errorReason → the agent sees the reason
-    (fix.md §3: the server errorReason is passed through, with guidance if known)."""
+    (the server errorReason is passed through, with guidance if known)."""
     fee_kp = _test_keypair()
     client_kp = _test_keypair()
     client_wallet = str(client_kp.pubkey())
@@ -350,7 +350,7 @@ def test_402_error_reason_passthrough():
                     json.dumps(env).encode()).decode()},
                 json=env,
             )
-        # Retry with payment → the server rejects (insufficient balance, §5.6)
+        # Retry with payment → the server rejects (insufficient balance)
         settle = SettleResponse(
             success=False, error_reason="insufficient_funds",
             transaction="", network=NETWORK, payer=client_wallet)
@@ -424,10 +424,10 @@ def test_receipt_wrong_amount_raises():
             client.chat("deepseek-v4-flash", [{"role": "user", "content": "hi"}])
 
 
-# ── Supported entry selection (Z23, §3.1) ───────────────────────────────
+# ── Supported entry selection ───────────────────────────────
 
 def test_payment_wrong_asset_blocks():
-    """402 with another mint (not USDC) → error BEFORE signing (no TX, Z23)."""
+    """402 with another mint (not USDC) → error BEFORE signing (no TX)."""
     fee_kp = _test_keypair()
     client_kp = _test_keypair()
     other_mint = "So11111111111111111111111111111111111111112"  # SOL mint
@@ -443,7 +443,7 @@ def test_payment_wrong_asset_blocks():
 
 
 def test_payment_wrong_network_blocks():
-    """402 with another network → error BEFORE signing (no TX, Z23)."""
+    """402 with another network → error BEFORE signing (no TX)."""
     fee_kp = _test_keypair()
     client_kp = _test_keypair()
     other_network = "solana:4sGjMW1sUnHzSxGspuhpqLDx6wiyjNtZ"  # devnet
@@ -459,7 +459,7 @@ def test_payment_wrong_network_blocks():
 
 
 def test_payment_empty_accepts_blocks():
-    """Empty accepts → error BEFORE signing (no TX, Z23)."""
+    """Empty accepts → error BEFORE signing (no TX)."""
     fee_kp = _test_keypair()
     client_kp = _test_keypair()
 
@@ -479,7 +479,7 @@ def test_payment_empty_accepts_blocks():
             client.chat("deepseek-v4-flash", [{"role": "user", "content": "hi"}])
 
 
-# ── SIWX (z3, §5.7) ────────────────────────────────────────────────────────
+# ── SIWX ────────────────────────────────────────────────────────
 
 def test_siwx_header_sent_on_402():
     """402 with SIWX challenge → client signs → retry with SIGN-IN-WITH-X."""
@@ -495,8 +495,8 @@ def test_siwx_header_sent_on_402():
     assert seen[0]["has_siwx"] is False
     assert seen[1]["has_siwx"] is True
     assert seen[1]["has_payment"] is False
-    # Z22: payment retry WITHOUT SIGN-IN-WITH-X — official pattern "SIWX or
-    # payment" (nonce is one-time, already used; §5.7)
+    # payment retry WITHOUT SIGN-IN-WITH-X — official pattern "SIWX or
+    # payment" (nonce is one-time, already used)
     assert seen[2]["has_payment"] is True
     assert seen[2]["has_siwx"] is False
 
@@ -516,7 +516,7 @@ def test_siwx_no_challenge_normal_payment():
 
 
 def test_siwx_granted_direct_200():
-    """Known agent: SIWX retry → 200 without payment (§5.7) — payload None, no receipt."""
+    """Known agent: SIWX retry → 200 without payment — payload None, no receipt."""
     fee_kp = _test_keypair()
     client_kp = _test_keypair()
     handler, seen = _make_server(fee_kp, str(client_kp.pubkey()),
@@ -532,7 +532,7 @@ def test_siwx_granted_direct_200():
 
 
 def test_siwx_header_cryptographically_valid():
-    """SIGN-IN-WITH-X header — officially verifiable (Ed25519, §5.7)."""
+    """SIGN-IN-WITH-X header — officially verifiable (Ed25519)."""
     import asyncio
 
     from x402.extensions.sign_in_with_x import parse_siwx_header, verify_siwx_signature
@@ -548,7 +548,7 @@ def test_siwx_header_cryptographically_valid():
     assert header
     payload = parse_siwx_header(header)
     assert payload.address == str(client_kp.pubkey())
-    # x402 2.20.0 (FAZĖ 3 #7.5): challenge bound to response origin (http://test)
+    # challenge bound to response origin (http://test)
     assert payload.domain == "test"
     assert payload.nonce == "nonce1234567890abcdef"
     result = asyncio.run(verify_siwx_signature(payload))
@@ -594,7 +594,7 @@ def test_spending_daily_cap_blocks():
 
 
 def test_spending_env_overrides(monkeypatch):
-    """BRIDGENODE_MAX_PER_CALL/DAILY_CAP from env (configurable, §8.5)."""
+    """BRIDGENODE_MAX_PER_CALL/DAILY_CAP from env (configurable)."""
     monkeypatch.setenv("BRIDGENODE_MAX_PER_CALL", "0.5")
     monkeypatch.setenv("BRIDGENODE_DAILY_CAP", "5.0")
     monkeypatch.setenv("BRIDGENODE_WALLET_KEY", _test_wallet_key(_test_keypair()))
@@ -604,7 +604,7 @@ def test_spending_env_overrides(monkeypatch):
         assert client.daily_cap == 5.0
 
 
-# ── Configuration (§8.4) ─────────────────────────────────────────────────────
+# ── Configuration ─────────────────────────────────────────────────────
 
 def test_missing_wallet_key_raises(monkeypatch):
     monkeypatch.delenv("BRIDGENODE_WALLET_KEY", raising=False)
@@ -618,8 +618,8 @@ def test_default_base_url():
 
 
 def test_timeouts_defaults():
-    """§8.4: initial ≥ 30s (queue until 402), retry ≥ 113s (≤115s budget),
-    total flow timeout ≥ initial + retry (Z42)."""
+    """Initial ≥ 30s (queue until 402), retry ≥ 113s (≤115s budget),
+    total flow timeout ≥ initial + retry."""
     with _make_client(lambda r: httpx.Response(500)) as client:
         assert client.initial_timeout >= 30.0
         assert client.retry_timeout >= 113.0
@@ -628,8 +628,8 @@ def test_timeouts_defaults():
 
 
 def test_flow_timeout_triggers():
-    """Z42: flow timeout exceeded → BridgenodeError BEFORE any request
-    (total budget = 0 → immediate error, §8.4)."""
+    """Flow timeout exceeded → BridgenodeError BEFORE any request
+    (total budget = 0 → immediate error)."""
     fee_kp = _test_keypair()
     client_kp = _test_keypair()
     handler, seen = _make_server(fee_kp, str(client_kp.pubkey()))
@@ -652,7 +652,7 @@ def test_env_override(monkeypatch):
 
 
 def test_chat_stream_sse():
-    """stream=True (§5.5): SSE chunks yielded, receipt verified, [DONE] ends.
+    """stream=True: SSE chunks yielded, receipt verified, [DONE] ends.
 
     The 402 handshake is identical to non-stream; the paid retry returns
     a text/event-stream body that the client parses chunk-by-chunk.
@@ -696,14 +696,14 @@ def test_chat_stream_sse():
     assert len(chunks) == 2
     assert chunks[0]["choices"][0]["delta"]["content"] == "Hel"
     assert chunks[1]["choices"][0]["delta"]["content"] == "lo"
-    # receipt verified (Free-Riding, §8.4) — last_receipt populated
+    # receipt verified (Free-Riding) — last_receipt populated
     assert client.last_receipt is not None
     assert client.last_receipt["success"] is True
     assert client.last_receipt["payer"] == str(client_kp.pubkey())
 
 
 def test_chat_stream_sse():
-    """stream=True (§5.5): SSE chunks parsed, [DONE] stops, receipt verified."""
+    """stream=True: SSE chunks parsed, [DONE] stops, receipt verified."""
     fee_kp = _test_keypair()
     client_kp = _test_keypair()
     seen: list[dict] = []
@@ -750,7 +750,7 @@ def test_chat_stream_sse():
 
 
 def test_chat_retries_503_then_succeeds():
-    """§5.7 client-side retry: 503 (queue full) → backoff → 402 → payment → 200.
+    """Client-side retry: 503 (queue full) → backoff → 402 → payment → 200.
 
     Retry happens BEFORE any payment — nothing was charged on 503, retry is
     free; after payment there is NO retry (single PAYMENT-SIGNATURE retry).
@@ -764,7 +764,7 @@ def test_chat_retries_503_then_succeeds():
         seen.append(request.headers.get("PAYMENT-SIGNATURE") is not None)
         if not request.headers.get("PAYMENT-SIGNATURE"):
             calls["n"] += 1
-            # First call → 503 (queue full, §5.7); second → 402 challenge
+            # First call → 503 (queue full); second → 402 challenge
             if calls["n"] == 1:
                 return httpx.Response(503, headers={"Retry-After": "1"},
                                       json={"error": {"message": "queue full"}})
@@ -793,7 +793,7 @@ def test_chat_retries_503_then_succeeds():
 
 
 def test_list_models():
-    """§5.2: list_models() — public GET /models, no payment, prices returned."""
+    """list_models() — public GET /models, no payment, prices returned."""
     seen: list[str] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -817,7 +817,7 @@ def test_list_models():
 
 
 def test_list_models_error():
-    """§5.2: non-200 from /models → BridgenodeError with status."""
+    """Non-200 from /models → BridgenodeError with status."""
 
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(503, json={"error": {"message": "down"}})
@@ -828,10 +828,10 @@ def test_list_models_error():
     assert exc.value.status_code == 503
 
 
-# ── B-4: malformed 402 amounts → BridgenodeError (fail-closed) ──────────────
+# ── Malformed 402 amounts → BridgenodeError (fail-closed) ──────────────
 
 def _malformed_402_handler(fee_kp, client_wallet, amount: str):
-    """402 with a malformed `amount` in the accepts entry (B-4)."""
+    """402 with a malformed `amount` in the accepts entry."""
     def handler(request: httpx.Request) -> httpx.Response:
         env = _envelope(pay_to=client_wallet,
                         fee_payer=str(fee_kp.pubkey()),
@@ -846,7 +846,7 @@ def _malformed_402_handler(fee_kp, client_wallet, amount: str):
 
 
 def test_chat_malformed_402_decimal_amount_raises():
-    """B-4: decimal atomic amount ("12.5") → BridgenodeError, not ValueError."""
+    """Decimal atomic amount ("12.5") → BridgenodeError, not ValueError."""
     fee_kp = _test_keypair()
     client_kp = _test_keypair()
     client_wallet = str(client_kp.pubkey())
@@ -861,7 +861,7 @@ def test_chat_malformed_402_decimal_amount_raises():
 
 
 def test_chat_malformed_402_garbage_amount_raises():
-    """B-4: garbage amount ("abc") → BridgenodeError, not ValueError."""
+    """Garbage amount ("abc") → BridgenodeError, not ValueError."""
     fee_kp = _test_keypair()
     client_kp = _test_keypair()
     client_wallet = str(client_kp.pubkey())
@@ -876,7 +876,7 @@ def test_chat_malformed_402_garbage_amount_raises():
 
 
 def test_chat_malformed_402_nonpositive_amount_raises():
-    """B-4: zero/negative amount ("0") → BridgenodeError, no TX."""
+    """Zero/negative amount ("0") → BridgenodeError, no TX."""
     fee_kp = _test_keypair()
     client_kp = _test_keypair()
     client_wallet = str(client_kp.pubkey())
