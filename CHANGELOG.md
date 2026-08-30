@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.18](https://github.com/bridgenode-ai/bridgenode-llm/compare/bridgenode-llm-v0.2.17...bridgenode-llm-v0.2.18) (2026-08-30)
+
+
+### Bug Fixes
+
+* **deps:** x402 bounds `>=2.20.0,<3` — handle_402_response requires `request_url` (2.19 breaks) (B-5, §8.4)
+
 ## [0.2.17](https://github.com/bridgenode-ai/bridgenode-llm/compare/bridgenode-llm-v0.2.16...bridgenode-llm-v0.2.17) (2026-08-26)
 
 
