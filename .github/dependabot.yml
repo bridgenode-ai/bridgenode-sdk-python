@@ -9,3 +9,7 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
+    ignore:
+      # solana 0.40.x removed solana.rpc.api — x402 imports it (broken combo).
+      # Intentional exception (2026-08-31); PR #3 closed. See server.md.
+      - dependency-name: "solana"
