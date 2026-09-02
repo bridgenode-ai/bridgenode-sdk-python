@@ -1,6 +1,6 @@
 [project]
 name = "bridgenode-llm"
-version = "0.2.19"
+version = "0.2.20"
 description = "Agentic AI inference with x402 (HTTP 402) pay-per-request on Solana USDC — no API keys, no registration."
 readme = "README.md"
 requires-python = ">=3.11"

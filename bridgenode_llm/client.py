@@ -27,12 +27,11 @@ Rules:
 from __future__ import annotations
 
 import base64
-import base64
 import json
 import logging
 import os
 import time
-from datetime import date
+from datetime import datetime, timezone
 from typing import Any
 
 import httpx
@@ -180,6 +179,8 @@ class LLMClient:
                                    timeout=timeout)
         except httpx.ConnectError as exc:
             raise BridgenodeError(f"Connection failed: {exc}") from exc
+        except httpx.ReadError as exc:  # B7: connection dropped mid-read
+            raise BridgenodeError(f"Connection interrupted: {exc}") from exc
         except httpx.TimeoutException as exc:
             raise BridgenodeError(f"Request timed out: {exc}") from exc
 
@@ -189,6 +190,8 @@ class LLMClient:
             return self._http.send(req, stream=True)
         except httpx.ConnectError as exc:
             raise BridgenodeError(f"Connection failed: {exc}") from exc
+        except httpx.ReadError as exc:  # B7: connection dropped mid-read
+            raise BridgenodeError(f"Connection interrupted: {exc}") from exc
         except httpx.TimeoutException as exc:
             raise BridgenodeError(f"Request timed out: {exc}") from exc
 
@@ -264,8 +267,15 @@ class LLMClient:
                     retry_after = float(ra)
             except (TypeError, ValueError):
                 retry_after = None
+            # B5 (fix.md): negative Retry-After would crash time.sleep()
+            # (raw ValueError); never sleep past the flow deadline — the next
+            # request would throw the flow timeout anyway (TS SDK guards the
+            # same way: ra >= 0 + deadline bound, client.ts).
+            if retry_after is not None and retry_after < 0:
+                retry_after = None
             wait = min(retry_after if retry_after is not None
                        else backoff_s * (2 ** attempt), 15.0)
+            wait = min(wait, max(deadline - time.monotonic(), 0.0))
             time.sleep(wait)
 
         # 2) 402 → SIWX first, then spending policy + payment
@@ -482,7 +492,10 @@ class LLMClient:
             raise BridgenodeError(
                 f"Spending policy: ${amount_usd:.4f} exceeds max per call "
                 f"${self.max_per_call:.2f} — blocked (no payment made)")
-        today = date.today().isoformat()
+        # B6 (fix.md): UTC date — the daily cap must reset at the same
+        # boundary everywhere (TS SDK: toISOString() UTC). Local date.today()
+        # would reset at local midnight on non-UTC hosts.
+        today = datetime.now(timezone.utc).date().isoformat()
         spent = self._daily_spend.get(today, 0.0)
         if spent + amount_usd > self.daily_cap:
             raise BridgenodeError(
@@ -491,7 +504,7 @@ class LLMClient:
 
     def _record_spend(self, amount_usd: float) -> None:
         """Records the spent amount (UTC date; in-memory)."""
-        today = date.today().isoformat()
+        today = datetime.now(timezone.utc).date().isoformat()
         self._daily_spend[today] = self._daily_spend.get(today, 0.0) + amount_usd
 
     # ── Receipt verification (step 2) ──────────────────────────────────────────

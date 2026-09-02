@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.2.20](https://github.com/bridgenode-ai/bridgenode-llm/compare/bridgenode-llm-v0.2.19...bridgenode-llm-v0.2.20) (2026-09-01)
+
+
+### Bug Fixes
+
+* **sdk-python:** daily cap keyed by UTC date, not local (B6) ([ed3cf04](https://github.com/bridgenode-ai/bridgenode-llm/commit/ed3cf049172f4a8c2199985226e00a2b5efe22f1))
+* **sdk-python:** guard retry sleep against negative Retry-After (B5) ([3080b69](https://github.com/bridgenode-ai/bridgenode-llm/commit/3080b69c87d41990bb2f94fd94a3bd0e7a674127))
+* **sdk:** map network read errors to BridgenodeError (B7) ([da3e028](https://github.com/bridgenode-ai/bridgenode-llm/commit/da3e028a86d0d0995977bc3838f4d3bb66c67fef))
+* **tests:** zero warnings — close AlertManager httpx client in same loop; filter x402 upstream deprecation ([7597657](https://github.com/bridgenode-ai/bridgenode-llm/commit/759765702082487c3211638d51218168608f4d82))
+
+
+### Reverts
+
+* remove x402 filterwarnings — tests must SHOW warnings, not hide them (Leo 08-31) ([7033eb3](https://github.com/bridgenode-ai/bridgenode-llm/commit/7033eb3c9b2485d4554c9915d8e4ea3e8c4ce6f2))
+
 ## [0.2.19](https://github.com/bridgenode-ai/bridgenode-llm/compare/bridgenode-llm-v0.2.18...bridgenode-llm-v0.2.19) (2026-08-30)
 
 

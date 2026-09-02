@@ -604,6 +604,40 @@ def test_spending_env_overrides(monkeypatch):
         assert client.daily_cap == 5.0
 
 
+def test_spending_daily_cap_uses_utc_date(monkeypatch):
+    """B6 (fix.md): daily cap keyed by UTC date, NOT local date.today() —
+    the cap must reset at the same boundary everywhere (TS SDK: toISOString()
+    UTC). A fixed UTC date is injected via datetime.now(timezone.utc)."""
+    import bridgenode_llm.client as client_mod
+
+    fixed = datetime(2026, 9, 1, 23, 30, tzinfo=timezone.utc)
+
+    class _FakeDatetime:
+        """datetime is immutable — swap the module reference instead."""
+        @classmethod
+        def now(cls, tz=None):
+            return fixed
+
+    monkeypatch.setattr(client_mod, "datetime", _FakeDatetime)
+
+    fee_kp = _test_keypair()
+    client_kp = _test_keypair()
+    handler, seen = _make_server(fee_kp, str(client_kp.pubkey()),
+                                 amount="30000")  # $0.03
+
+    with _make_client(handler, _test_wallet_key(client_kp),
+                      max_per_call_usd=0.10, daily_cap_usd=0.05) as client:
+        resp = client.chat("deepseek-v4-flash", [{"role": "user", "content": "a"}])
+        assert resp["choices"][0]["message"]["content"] == "Hello!"
+        # Spend recorded under the UTC date (2026-09-01), not the local one
+        assert client._daily_spend.get("2026-09-01", 0.0) > 0
+        # Second call would exceed the daily cap (0.03 + 0.03 > 0.05)
+        with pytest.raises(BridgenodeError, match="daily cap"):
+            client.chat("deepseek-v4-flash", [{"role": "user", "content": "b"}])
+    assert len(seen) == 3
+    assert seen[-1]["has_payment"] is False
+
+
 # ── Configuration ─────────────────────────────────────────────────────
 
 def test_missing_wallet_key_raises(monkeypatch):
@@ -790,6 +824,102 @@ def test_chat_retries_503_then_succeeds():
     assert resp["choices"][0]["message"]["content"] == "Hello!"
     # exactly one payment retry (PAYMENT-SIGNATURE) — no retry after payment
     assert seen.count(True) == 1
+
+
+def test_post_read_error_maps_to_bridgenode_error():
+    """B7 (fix.md): httpx.ReadError (connection dropped mid-read) →
+    BridgenodeError, not a raw httpx exception — the SDK contract is
+    BridgenodeError everywhere (ConnectError/TimeoutException already mapped)."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadError("connection reset by peer")
+
+    with _make_client(handler) as client:
+        with pytest.raises(BridgenodeError, match="Connection interrupted"):
+            client.chat("deepseek-v4-flash", "hi")
+
+
+def test_chat_retry_negative_retry_after_no_crash():
+    """B5 (fix.md): negative Retry-After must NOT crash time.sleep (raw
+    ValueError) — treated as absent, retry proceeds with backoff."""
+    fee_kp = _test_keypair()
+    client_kp = _test_keypair()
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if not request.headers.get("PAYMENT-SIGNATURE"):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                # Negative Retry-After — the old code did time.sleep(-5)
+                return httpx.Response(429, headers={"Retry-After": "-5"},
+                                      json={"error": {"message": "slow down"}})
+            env = _envelope(pay_to=str(client_kp.pubkey()),
+                            fee_payer=str(fee_kp.pubkey()),
+                            amount="2000")
+            return httpx.Response(
+                402,
+                headers={"PAYMENT-REQUIRED": base64.b64encode(
+                    json.dumps(env).encode()).decode()},
+                json=env,
+            )
+        headers = {"PAYMENT-RESPONSE": _receipt_header(
+            request.headers["PAYMENT-SIGNATURE"], fee_kp,
+            str(client_kp.pubkey()))}
+        return httpx.Response(200, json=_openai_response(), headers=headers)
+
+    with _make_client(handler, _test_wallet_key(client_kp)) as client:
+        resp = client.chat("deepseek-v4-flash", "hi")
+
+    assert calls["n"] == 2
+    assert resp["choices"][0]["message"]["content"] == "Hello!"
+
+
+def test_chat_retry_wait_capped_by_flow_deadline(monkeypatch):
+    """B5 (fix.md): the retry wait never exceeds the remaining flow deadline —
+    a huge Retry-After (60s) with a 0.3s budget sleeps ~0.3s, then the flow
+    fails with Flow timeout (not a 15s sleep / not a hang)."""
+    import time as _time
+
+    sleeps: list[float] = []
+    real_sleep = _time.sleep
+
+    def fake_sleep(s: float) -> None:
+        sleeps.append(s)
+        real_sleep(s)  # advance time — otherwise the flow never times out
+
+    monkeypatch.setattr(_time, "sleep", fake_sleep)
+    fee_kp = _test_keypair()
+    client_kp = _test_keypair()
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if not request.headers.get("PAYMENT-SIGNATURE"):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return httpx.Response(429, headers={"Retry-After": "60"},
+                                      json={"error": {"message": "slow down"}})
+            env = _envelope(pay_to=str(client_kp.pubkey()),
+                            fee_payer=str(fee_kp.pubkey()),
+                            amount="2000")
+            return httpx.Response(
+                402,
+                headers={"PAYMENT-REQUIRED": base64.b64encode(
+                    json.dumps(env).encode()).decode()},
+                json=env,
+            )
+        headers = {"PAYMENT-RESPONSE": _receipt_header(
+            request.headers["PAYMENT-SIGNATURE"], fee_kp,
+            str(client_kp.pubkey()))}
+        return httpx.Response(200, json=_openai_response(), headers=headers)
+
+    with _make_client(handler, _test_wallet_key(client_kp),
+                      flow_timeout=0.3) as client:
+        with pytest.raises(BridgenodeError, match="Flow timeout"):
+            client.chat("deepseek-v4-flash", "hi")
+
+    # The wait was capped by the flow deadline (~0.3s), not the 60s
+    # Retry-After nor the 15s cap — the client failed fast, no hang.
+    assert sleeps, "expected a retry sleep"
+    assert max(sleeps) < 1.0, f"wait not capped by deadline: {sleeps}"
 
 
 def test_list_models():
