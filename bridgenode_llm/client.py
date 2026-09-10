@@ -153,9 +153,10 @@ class LLMClient:
         self._daily_spend: dict[str, float] = {}
 
         # Free-trial state from the last response headers (audit.md step 4):
-        # an agent can see how many free calls are left BEFORE it meets the wall.
+        # an agent can see how many free calls are left BEFORE it meets the
+        # wall. ``None`` = the response was not a free trial (free model or
+        # paid), an integer = trials left after this call.
         self.last_trials_remaining: int | None = None
-        self.last_trial_kind: str | None = None
 
         # Payment client (official x402 client + SVM signer) — built LAZILY,
         # only when a payment is actually needed (_ensure_payment_client)
@@ -202,13 +203,9 @@ class LLMClient:
         """Free-trial state from the response headers (server: audit.md step 2).
 
         Lets an agent see how many free calls are left before the wall, without
-        parsing prose: ``X-Bridgenode-Free-Trial`` / ``…-Trials-Remaining``.
+        parsing prose: ``X-Bridgenode-Free-Trials-Remaining``.
         """
-        kind = resp.headers.get("X-Bridgenode-Free-Trial")
         remaining = resp.headers.get("X-Bridgenode-Free-Trials-Remaining")
-        if kind is None and remaining is None:
-            return
-        self.last_trial_kind = kind
         try:
             self.last_trials_remaining = int(remaining) if remaining is not None else None
         except (TypeError, ValueError):

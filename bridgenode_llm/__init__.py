@@ -8,4 +8,4 @@ interactive prompts (§8.4).
 from .client import BRIDGENODE_BASE_URL, BridgenodeError, LLMClient
 
 __all__ = ["LLMClient", "BridgenodeError", "BRIDGENODE_BASE_URL"]
-__version__ = "0.3.0"
+__version__ = "0.3.1"

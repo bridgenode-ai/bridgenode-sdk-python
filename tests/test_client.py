@@ -651,8 +651,9 @@ def test_missing_wallet_key_free_path_works(monkeypatch):
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen.append({"has_payment": "PAYMENT-SIGNATURE" in request.headers})
+        # the server sends the trial flag and the remaining count
         return httpx.Response(200, json=_openai_response(), headers={
-            "X-Bridgenode-Free-Trial": "trial",
+            "X-Bridgenode-Free-Trial": "1",
             "X-Bridgenode-Free-Trials-Remaining": "1",
         })
 
@@ -663,7 +664,6 @@ def test_missing_wallet_key_free_path_works(monkeypatch):
         assert resp["choices"][0]["message"]["content"] == "Hello!"
         # free trials are visible to the agent without parsing prose
         assert client.last_trials_remaining == 1
-        assert client.last_trial_kind == "trial"
         assert seen == [{"has_payment": False}], "no payment was attempted"
     finally:
         client.close()
