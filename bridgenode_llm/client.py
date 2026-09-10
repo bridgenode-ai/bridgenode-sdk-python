@@ -105,8 +105,15 @@ class LLMClient:
     Usage:
         from bridgenode_llm import LLMClient
         client = LLMClient()          # key from .env (BRIDGENODE_WALLET_KEY)
-        resp = client.chat("deepseek-v4-flash", [
+        resp = client.chat("deepseek-flash", [
             {"role": "user", "content": "Hello!"}])
+
+    No wallet needed to start (Leo 2026-09-10, audit.md step 4): the free
+    models run without payment, and the first calls to a PAID model are free
+    per client (free trials) — an agent can therefore try real inference
+    before it owns a wallet. A wallet key is required ONLY when a request
+    actually reaches the payment wall; then the client raises a clear
+    BridgenodeError instead of a broken handshake.
 
     step 2: verifies the PAYMENT-RESPONSE receipt after 200 (error if forged) and
     spending policy BEFORE payment (fail-closed).
@@ -124,15 +131,13 @@ class LLMClient:
         env_path: str = ".env",
         transport: httpx.BaseTransport | None = None,
     ) -> None:
-        """Creates the client. Key ONLY from `.env` (no arguments)."""
+        """Creates the client. Key ONLY from `.env` (no arguments) — optional:
+        without it the free path (free models + free trials) still works."""
         if load_dotenv is not None:
             load_dotenv(env_path)
 
         self.wallet_key = os.environ.get("BRIDGENODE_WALLET_KEY")
-        if not self.wallet_key:
-            raise BridgenodeError(
-                "BRIDGENODE_WALLET_KEY missing — set it in .env "
-                "(your Solana wallet private key, base58)")
+        self.rpc_url = rpc_url or os.environ.get("BRIDGENODE_RPC_URL")
 
         self.base_url = (base_url or os.environ.get("BRIDGENODE_BASE_URL")
                          or BRIDGENODE_BASE_URL).rstrip("/")
@@ -147,24 +152,67 @@ class LLMClient:
             os.environ.get("BRIDGENODE_DAILY_CAP", DEFAULT_DAILY_CAP_USD))
         self._daily_spend: dict[str, float] = {}
 
-        # Official x402 client + SVM signer
+        # Free-trial state from the last response headers (audit.md step 4):
+        # an agent can see how many free calls are left BEFORE it meets the wall.
+        self.last_trials_remaining: int | None = None
+        self.last_trial_kind: str | None = None
+
+        # Payment client (official x402 client + SVM signer) — built LAZILY,
+        # only when a payment is actually needed (_ensure_payment_client)
+        self._signer = None
+        self._x402 = None
+        self._http_helper = None
+        self._payment_ready = False
+        self.wallet_address: str | None = None
+        self._http = httpx.Client(transport=transport)
+
+        # Last verified receipt (PAYMENT-RESPONSE) — for introspection
+        self.last_receipt: dict[str, Any] | None = None
+
+    def _ensure_payment_client(self) -> None:
+        """Official x402 client + SVM signer — created ON FIRST PAYMENT ONLY.
+
+        The free path (free models, free trials) needs no wallet, so the
+        constructor no longer demands a key. When a request reaches the wall
+        without one, the agent gets one actionable sentence instead of a
+        crash or a failed handshake (audit.md step 4).
+        """
+        if self._payment_ready:
+            return
+        if not self.wallet_key:
+            raise BridgenodeError(
+                "This request needs payment (free models and the free trials "
+                "are used up). Set BRIDGENODE_WALLET_KEY in .env — your Solana "
+                "wallet private key (base58) — or call a free model: see "
+                f"{self.base_url}/models for models marked free.")
         signer = KeypairSigner.from_base58(self.wallet_key)
         self._signer = signer
         self.wallet_address = signer.address
         self._x402 = x402ClientSync()
         register_exact_svm_client(
-            self._x402, signer,
-            rpc_url=rpc_url or os.environ.get("BRIDGENODE_RPC_URL"),
-        )
+            self._x402, signer, rpc_url=self.rpc_url)
         # Official practice (docs.x402.org lifecycle-hooks): spending policy
         # enforced IN CODE, next to the payment client — protection remains even
         # if env vars are missing; the hook runs BEFORE payload creation
         self._x402.on_before_payment_creation(self._spending_policy_hook)
         self._http_helper = x402HTTPClientSync(self._x402)
-        self._http = httpx.Client(transport=transport)
+        self._payment_ready = True
 
-        # Last verified receipt (PAYMENT-RESPONSE) — for introspection
-        self.last_receipt: dict[str, Any] | None = None
+    def _read_trial_headers(self, resp: httpx.Response) -> None:
+        """Free-trial state from the response headers (server: audit.md step 2).
+
+        Lets an agent see how many free calls are left before the wall, without
+        parsing prose: ``X-Bridgenode-Free-Trial`` / ``…-Trials-Remaining``.
+        """
+        kind = resp.headers.get("X-Bridgenode-Free-Trial")
+        remaining = resp.headers.get("X-Bridgenode-Free-Trials-Remaining")
+        if kind is None and remaining is None:
+            return
+        self.last_trial_kind = kind
+        try:
+            self.last_trials_remaining = int(remaining) if remaining is not None else None
+        except (TypeError, ValueError):
+            self.last_trials_remaining = None
 
     def _post(self, url: str, *, json: dict | None = None,
               headers: dict | None = None,
@@ -280,6 +328,10 @@ class LLMClient:
 
         # 2) 402 → SIWX first, then spending policy + payment
         if resp.status_code == 402:
+            # No wallet → free models / trials only: one clear sentence beats
+            # a handshake that cannot finish (audit.md step 4). Raised BEFORE
+            # any signing attempt.
+            self._ensure_payment_client()
             get_header, _body_data = self._resp_headers(resp)
             payment_required = self._http_helper.get_payment_required_response(
                 get_header, resp.content)
@@ -355,6 +407,7 @@ class LLMClient:
         # failure (5xx) → the server refunds, a pessimistic cap is unnecessary
         # (step 2: receipt verification BEFORE recording spend — if the receipt
         # is forged, the spend is NOT recorded, daily cap stays intact)
+        self._read_trial_headers(resp)  # free-trial state (no wallet involved)
         if payload is not None:
             self._verify_receipt(payload, resp)
             self._record_spend(amount_usd)

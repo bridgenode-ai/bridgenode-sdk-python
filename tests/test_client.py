@@ -640,10 +640,51 @@ def test_spending_daily_cap_uses_utc_date(monkeypatch):
 
 # ── Configuration ─────────────────────────────────────────────────────
 
-def test_missing_wallet_key_raises(monkeypatch):
+def test_missing_wallet_key_free_path_works(monkeypatch):
+    """audit.md step 4: no wallet key → the client still starts and the FREE
+    path works (a free model or a free trial is served without payment).
+
+    A wallet is required ONLY when a request actually reaches the wall.
+    """
     monkeypatch.delenv("BRIDGENODE_WALLET_KEY", raising=False)
-    with pytest.raises(BridgenodeError, match="BRIDGENODE_WALLET_KEY"):
-        LLMClient(base_url="http://test/v1", env_path="/nonexistent/.env")
+    seen: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append({"has_payment": "PAYMENT-SIGNATURE" in request.headers})
+        return httpx.Response(200, json=_openai_response(), headers={
+            "X-Bridgenode-Free-Trial": "trial",
+            "X-Bridgenode-Free-Trials-Remaining": "1",
+        })
+
+    client = LLMClient(base_url="http://test/v1", transport=httpx.MockTransport(handler),
+                       env_path="/nonexistent/.env")
+    try:
+        resp = client.chat("deepseek-flash", [{"role": "user", "content": "hi"}])
+        assert resp["choices"][0]["message"]["content"] == "Hello!"
+        # free trials are visible to the agent without parsing prose
+        assert client.last_trials_remaining == 1
+        assert client.last_trial_kind == "trial"
+        assert seen == [{"has_payment": False}], "no payment was attempted"
+    finally:
+        client.close()
+
+
+def test_missing_wallet_key_payment_wall_raises(monkeypatch):
+    """A wallet-less client that reaches the wall gets ONE actionable sentence
+    (not a crash, not a broken handshake)."""
+    monkeypatch.delenv("BRIDGENODE_WALLET_KEY", raising=False)
+    fee_kp = _test_keypair()
+    handler, _seen = _make_server(fee_kp, "placeholderwallet")
+
+    client = LLMClient(base_url="http://test/v1", transport=httpx.MockTransport(handler),
+                       env_path="/nonexistent/.env")
+    try:
+        with pytest.raises(BridgenodeError) as exc:
+            client.chat("deepseek-flash", [{"role": "user", "content": "hi"}])
+        assert "BRIDGENODE_WALLET_KEY" in str(exc.value)
+        assert "free" in str(exc.value).lower(), "the free path must be offered"
+    finally:
+        client.close()
 
 
 def test_default_base_url():

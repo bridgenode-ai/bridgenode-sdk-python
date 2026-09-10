@@ -12,6 +12,7 @@ BridgeNode Python SDK — AI inference for AI agents, no API keys. Pay per reque
 
 ## Features
 
+- **Start free, no wallet** — free models run without payment, and the first **2 calls to a paid model are free per client** (free trials); a wallet is needed only after that
 - **No API keys, no registration** — pay per request with USDC
 - **Automatic x402 handshake** — 402 → signed transaction → 200, fully hidden
 - **Fee sponsorship (gasless)** — the agent needs zero SOL
@@ -49,13 +50,28 @@ pip install bridgenode
 ```python
 from bridgenode_llm import LLMClient
 
-client = LLMClient()  # key from .env (BRIDGENODE_WALLET_KEY)
-resp = client.chat("deepseek-v4-flash", [
+client = LLMClient()  # wallet key from .env (BRIDGENODE_WALLET_KEY) — optional
+resp = client.chat("deepseek-flash", [
     {"role": "user", "content": "Hello!"}])
 print(resp["choices"][0]["message"]["content"])
 ```
 
 Everything is handled automatically: payment, retry, receipt verification. No API key required.
+
+### Free path — no wallet needed
+
+Free models (`"free": true` in `GET /v1/models`) run without payment, and a
+client that has never called BridgeNode gets **2 free calls on PAID models**
+(free trials) — real inference before any wallet exists. `BRIDGENODE_WALLET_KEY`
+is read lazily: it is required only when a request actually reaches the payment
+wall, and then the SDK raises one actionable error instead of a broken
+handshake. The remaining trial count is exposed after every call:
+
+```python
+client = LLMClient()          # no wallet required for the free path
+resp = client.chat("gpt-oss-120b", [{"role": "user", "content": "hi"}])
+print(client.last_trials_remaining)   # None for free models, 1 → 0 for trials
+```
 
 ### Smart routing
 
@@ -67,7 +83,8 @@ resp = client.chat(None, "Explain quantum computing", mode="auto")
 ## Configuration (.env)
 
 ```bash
-# Required — your Solana wallet private key (base58)
+# Optional — your Solana wallet private key (base58).
+# Needed only for PAID requests: free models and the 2 free trials work without it.
 BRIDGENODE_WALLET_KEY=...
 
 # Optional
@@ -85,13 +102,16 @@ BRIDGENODE_WALLET_KEY=...
 ## Requirements
 
 - Python ≥ 3.11
-- A Solana wallet with a USDC token account (ATA)
+- A Solana wallet with a USDC token account (ATA) — only for PAID requests;
+  the free path (free models + free trials) needs no wallet
 
 ## FAQ
 
 **Do agents need SOL?** No — fees are sponsored. The agent pays only the USDC request amount.
 
 **Is there an API key?** No. Your wallet signature is the identity (SIWX); payment is the access.
+
+**Can an agent try it without a wallet?** Yes — free models and the first 2 calls to a paid model per client are free, over HTTP, MCP and both SDKs.
 
 **What happens if the spending cap is exceeded?** The request is blocked before signing — fail-closed, no payment is made.
 
