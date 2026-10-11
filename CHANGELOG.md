@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.1](https://github.com/bridgenode-ai/bridgenode-llm/compare/bridgenode-llm-v0.4.0...bridgenode-llm-v0.4.1) (2026-10-11)
+
+
+### Bug Fixes
+
+* **deps:** refresh the declared Python floors to current stable ([1c632db](https://github.com/bridgenode-ai/bridgenode-llm/commit/1c632db02f52e36ba604a2b266849a1bf2b0d05a))
+
 ## [0.4.0](https://github.com/bridgenode-ai/bridgenode-llm/compare/bridgenode-llm-v0.3.1...bridgenode-llm-v0.4.0) (2026-10-11)
 
 
