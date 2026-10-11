@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/bridgenode-ai/bridgenode-llm/compare/bridgenode-llm-v0.3.1...bridgenode-llm-v0.4.0) (2026-10-11)
+
+
+### Features
+
+* **tools:** forward tool calling through the SDKs and CLI (etapas.md stage 3) ([4bf86ca](https://github.com/bridgenode-ai/bridgenode-llm/commit/4bf86ca839ffec2fa402852dbf85580a833f8750))
+
 ## [0.3.1](https://github.com/bridgenode-ai/bridgenode-llm/compare/bridgenode-llm-v0.3.0...bridgenode-llm-v0.3.1) (2026-09-10)
 
 

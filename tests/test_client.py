@@ -727,57 +727,6 @@ def test_env_override(monkeypatch):
 
 
 def test_chat_stream_sse():
-    """stream=True: SSE chunks yielded, receipt verified, [DONE] ends.
-
-    The 402 handshake is identical to non-stream; the paid retry returns
-    a text/event-stream body that the client parses chunk-by-chunk.
-    """
-    fee_kp = _test_keypair()
-    client_kp = _test_keypair()
-    seen: list[dict] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        seen.append({
-            "has_payment": request.headers.get("PAYMENT-SIGNATURE") is not None,
-            "body": json.loads(request.content),
-        })
-        if not request.headers.get("PAYMENT-SIGNATURE"):
-            env = _envelope(pay_to=str(client_kp.pubkey()),
-                            fee_payer=str(fee_kp.pubkey()),
-                            amount="2000")
-            return httpx.Response(
-                402,
-                headers={"PAYMENT-REQUIRED": base64.b64encode(
-                    json.dumps(env).encode()).decode()},
-                json=env,
-            )
-        headers = {"PAYMENT-RESPONSE": _receipt_header(
-            request.headers["PAYMENT-SIGNATURE"], fee_kp,
-            str(client_kp.pubkey()))}
-        sse = (
-            'data: {"id":"1","choices":[{"delta":{"content":"Hel"}}]}\n\n'
-            'data: {"id":"1","choices":[{"delta":{"content":"lo"}}]}\n\n'
-            'data: [DONE]\n\n'
-        )
-        return httpx.Response(200, text=sse, headers=headers)
-
-    with _make_client(handler, _test_wallet_key(client_kp)) as client:
-        chunks = list(client.chat("deepseek-v4-flash", "hi", stream=True))
-
-    # stream: true was sent in the body
-    assert seen[0]["body"].get("stream") is True
-    assert seen[1]["body"].get("stream") is True
-    # SSE chunks parsed, [DONE] stops the iteration
-    assert len(chunks) == 2
-    assert chunks[0]["choices"][0]["delta"]["content"] == "Hel"
-    assert chunks[1]["choices"][0]["delta"]["content"] == "lo"
-    # receipt verified (Free-Riding) — last_receipt populated
-    assert client.last_receipt is not None
-    assert client.last_receipt["success"] is True
-    assert client.last_receipt["payer"] == str(client_kp.pubkey())
-
-
-def test_chat_stream_sse():
     """stream=True: SSE chunks parsed, [DONE] stops, receipt verified."""
     fee_kp = _test_keypair()
     client_kp = _test_keypair()
@@ -1059,3 +1008,171 @@ def test_chat_malformed_402_nonpositive_amount_raises():
             client.chat("deepseek-v4-flash",
                         [{"role": "user", "content": "Hello!"}])
     assert "Invalid payment amount" in str(exc.value)
+
+
+# ── Tool calling (agent round) ───────────────────────────────────────────────
+
+TOOLS = [{
+    "type": "function",
+    "function": {
+        "name": "get_weather",
+        "description": "Current weather for a city",
+        "parameters": {
+            "type": "object",
+            "properties": {"city": {"type": "string"}},
+            "required": ["city"],
+        },
+    },
+}]
+
+
+def _tool_call_response() -> dict:
+    """Provider answer for a tool round: content null + tool_calls."""
+    return {
+        "id": "cmpl-tool-1",
+        "object": "chat.completion",
+        "created": 1,
+        "model": "gpt-oss-120b",
+        "choices": [{
+            "index": 0,
+            "message": {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [{
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {
+                        "name": "get_weather",
+                        "arguments": '{"city": "Vilnius"}',
+                    },
+                }],
+            },
+            "finish_reason": "tool_calls",
+        }],
+        "usage": {"prompt_tokens": 10, "completion_tokens": 5,
+                  "total_tokens": 15},
+    }
+
+
+def test_chat_forwards_tools_on_both_requests():
+    """tools/tool_choice reach the 402 AND the paid retry, same body.
+
+    The server binds the payment challenge to the request body hash — a body
+    changed between the challenge and the paid retry is rejected, so the tool
+    definitions must travel in the FIRST request already.
+    """
+    fee_kp = _test_keypair()
+    client_kp = _test_keypair()
+    handler, seen = _make_server(fee_kp, str(client_kp.pubkey()))
+
+    with _make_client(handler, _test_wallet_key(client_kp)) as client:
+        client.chat("gpt-oss-120b", [{"role": "user", "content": "Weather?"}],
+                    tools=TOOLS, tool_choice="auto")
+
+    assert seen[0]["has_payment"] is False
+    assert seen[1]["has_payment"] is True
+    assert seen[0]["body"]["tools"] == TOOLS
+    assert seen[0]["body"]["tool_choice"] == "auto"
+    # price-bind: the paid retry repeats the SAME body (hash must match)
+    assert seen[1]["body"] == seen[0]["body"]
+
+
+def test_chat_without_tools_omits_the_field():
+    """No tools argument → no `tools` key in the body (not `tools: null`)."""
+    fee_kp = _test_keypair()
+    client_kp = _test_keypair()
+    handler, seen = _make_server(fee_kp, str(client_kp.pubkey()))
+
+    with _make_client(handler, _test_wallet_key(client_kp)) as client:
+        client.chat("gpt-oss-120b", "hi")
+
+    assert "tools" not in seen[0]["body"]
+    assert "tool_choice" not in seen[0]["body"]
+
+
+def test_chat_tool_calls_response_returned_unchanged():
+    """Round ①: content null + tool_calls + finish_reason pass through as-is."""
+    expected = _tool_call_response()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=expected)
+
+    with _make_client(handler, _test_wallet_key(_test_keypair())) as client:
+        resp = client.chat("gpt-oss-120b",
+                           [{"role": "user", "content": "Weather?"}],
+                           tools=TOOLS)
+
+    assert resp == expected
+    message = resp["choices"][0]["message"]
+    assert message["content"] is None
+    assert message["tool_calls"][0]["function"]["name"] == "get_weather"
+    assert resp["choices"][0]["finish_reason"] == "tool_calls"
+
+
+def test_chat_second_round_sends_tool_result_unchanged():
+    """Round ②: the assistant tool_calls message + role:"tool" result travel."""
+    seen: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.content))
+        return httpx.Response(200, json=_openai_response())
+
+    messages = [
+        {"role": "user", "content": "Weather?"},
+        {"role": "assistant", "content": None,
+         "tool_calls": _tool_call_response()["choices"][0]["message"]["tool_calls"]},
+        {"role": "tool", "tool_call_id": "call_1", "content": '{"temp_c": 7}'},
+    ]
+
+    with _make_client(handler, _test_wallet_key(_test_keypair())) as client:
+        resp = client.chat("gpt-oss-120b", messages, tools=TOOLS)
+
+    assert resp["choices"][0]["message"]["content"] == "Hello!"
+    assert seen[0]["messages"] == messages
+    assert seen[0]["tools"] == TOOLS
+
+
+def test_chat_stream_tool_call_deltas_pass_through():
+    """stream=True: delta.tool_calls fragments reach the agent unchanged."""
+    fee_kp = _test_keypair()
+    client_kp = _test_keypair()
+    seen: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.content))
+        if not request.headers.get("PAYMENT-SIGNATURE"):
+            env = _envelope(pay_to=str(client_kp.pubkey()),
+                            fee_payer=str(fee_kp.pubkey()),
+                            amount="2000")
+            return httpx.Response(
+                402,
+                headers={"PAYMENT-REQUIRED": base64.b64encode(
+                    json.dumps(env).encode()).decode()},
+                json=env,
+            )
+        headers = {"PAYMENT-RESPONSE": _receipt_header(
+            request.headers["PAYMENT-SIGNATURE"], fee_kp,
+            str(client_kp.pubkey()))}
+        sse = (
+            'data: {"id":"1","choices":[{"delta":{"tool_calls":[{"index":0,'
+            '"id":"call_1","type":"function","function":{"name":"get_weather",'
+            '"arguments":""}}]},"finish_reason":null}]}\n\n'
+            'data: {"id":"1","choices":[{"delta":{"tool_calls":[{"index":0,'
+            '"function":{"arguments":"{\\"city\\":\\"Vilnius\\"}"}}]}}]}\n\n'
+            'data: {"id":"1","choices":[{"delta":{},"finish_reason":'
+            '"tool_calls"}]}\n\n'
+            'data: [DONE]\n\n'
+        )
+        return httpx.Response(200, text=sse, headers=headers)
+
+    with _make_client(handler, _test_wallet_key(client_kp)) as client:
+        chunks = list(client.chat("gpt-oss-120b", "Weather?", stream=True,
+                                  tools=TOOLS))
+
+    assert seen[0]["tools"] == TOOLS
+    assert len(chunks) == 3
+    assert chunks[0]["choices"][0]["delta"]["tool_calls"][0]["function"]["name"] \
+        == "get_weather"
+    assert chunks[1]["choices"][0]["delta"]["tool_calls"][0]["function"][
+        "arguments"] == '{"city":"Vilnius"}'
+    assert chunks[2]["choices"][0]["finish_reason"] == "tool_calls"

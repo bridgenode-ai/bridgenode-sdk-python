@@ -244,7 +244,8 @@ class LLMClient:
 
     def chat(self, model: str | None, messages: str | list[dict],
              max_tokens: int | None = None, mode: str | None = None,
-             stream: bool = False) -> dict[str, Any] | Any:
+             stream: bool = False, tools: list[dict] | None = None,
+             tool_choice: str | dict | None = None) -> dict[str, Any] | Any:
         """Single chat completion via the automatic x402 handshake.
 
         ``messages`` can be a string (automatically
@@ -256,6 +257,23 @@ class LLMClient:
         ``[DONE]`` marker; the receipt is verified and spend recorded BEFORE
         the first chunk is yielded (billing boundary). Default (False)
         returns the full JSON response — backward-compatible.
+
+        ``tools`` / ``tool_choice`` (optional): the agent's own tool
+        definitions in OpenAI format, forwarded as-is. The body is built ONCE
+        and reused for every request of the handshake — the server binds the
+        payment challenge to the request body, so a body changed between the
+        challenge and the paid retry is rejected. Pass them on the FIRST call.
+
+        Tool calling: when the model decides to call a tool, the response is
+        returned untouched — ``choices[0].message.tool_calls`` with
+        ``content: null`` and ``finish_reason: "tool_calls"``. Run the tool
+        yourself and send the result back in the next call as a
+        ``{"role": "tool", "tool_call_id": ..., "content": ...}`` message
+        (plus the assistant message carrying the ``tool_calls``), then repeat
+        until ``finish_reason`` is not ``"tool_calls"``. Every round is its
+        own paid request.
+        The tool schema counts as INPUT tokens, so it raises the price and
+        does not fit the free trial budget on large tool sets.
 
         step 2: spending policy BEFORE signing; PAYMENT-RESPONSE receipt
         verification after 200. Errors → BridgenodeError.
@@ -275,6 +293,13 @@ class LLMClient:
             body["mode"] = mode
         if stream:
             body["stream"] = True
+        # Agent tool calling: forwarded as-is, on EVERY request of the
+        # handshake (the body is built once — the server binds the challenge
+        # to the body hash, so it must not change between 402 and the retry).
+        if tools is not None:
+            body["tools"] = tools
+        if tool_choice is not None:
+            body["tool_choice"] = tool_choice
         headers = {"Content-Type": "application/json"}
         payload = None  # PaymentPayload — for step 2 receipt verification
 

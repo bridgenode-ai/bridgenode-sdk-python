@@ -80,6 +80,46 @@ print(client.last_trials_remaining)   # None for free models, 1 → 0 for trials
 resp = client.chat(None, "Explain quantum computing", mode="auto")
 ```
 
+### Tool calling
+
+Send your own tool definitions (OpenAI format) and run the agent loop
+yourself — the SDK forwards `tools`/`tool_choice` unchanged and returns the
+provider answer untouched:
+
+```python
+tools = [{
+    "type": "function",
+    "function": {
+        "name": "get_weather",
+        "description": "Current weather for a city",
+        "parameters": {"type": "object",
+                       "properties": {"city": {"type": "string"}},
+                       "required": ["city"]},
+    },
+}]
+
+messages = [{"role": "user", "content": "What is the weather in Vilnius?"}]
+while True:
+    resp = client.chat("gpt-oss-120b", messages, tools=tools)
+    message = resp["choices"][0]["message"]
+    messages.append(message)
+    if not message.get("tool_calls"):
+        print(message["content"])
+        break
+    for call in message["tool_calls"]:
+        # run your own tool here (arguments is a JSON string)
+        messages.append({"role": "tool", "tool_call_id": call["id"],
+                         "content": '{"temp_c": 7}'})
+```
+
+Notes:
+- The tool-calling answer has `content: null`, `finish_reason: "tool_calls"`
+  and `message.tool_calls` — that is normal, not an error.
+- **Every round is its own paid request** (one x402 payment per call).
+- The tool schema counts as **input tokens**: it raises the price, and large
+  tool sets do not fit the free trial budget (8 000 tokens on the free models).
+- Only models marked `"tools": true` in `GET /v1/models` support this.
+
 ## Configuration (.env)
 
 ```bash
